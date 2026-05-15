@@ -161,47 +161,98 @@ Schema migrations are versioned and incremental. Existing data is always preserv
 
 ## Deploying to Production
 
-This project was designed to run locally. The backend stores all data in `/backend/data/db.json` and writes files to disk — it requires a server with a **persistent filesystem**.
+Two supported deployment options. Choose based on your needs:
 
-### Frontend on Vercel + Backend on Railway (recommended)
+| | Option A — Railway | Option B — Vercel full-stack |
+|---|---|---|
+| **Storage** | Local `db.json` + disk | Vercel Postgres + Vercel Blob |
+| **Complexity** | Low | Medium |
+| **Free tier** | Railway Hobby plan | Vercel + Postgres + Blob free tiers |
+| **Data location** | Your server volume | Vercel infrastructure |
 
-**1. Deploy the backend on [Railway](https://railway.app) or [Render](https://render.com)**
+---
 
-- Connect your repo and set the root directory to `backend`
+### Option A — Frontend on Vercel + Backend on Railway *(recommended)*
+
+No database setup required. Data stays in a file on your server.
+
+**1. Deploy the backend on [Railway](https://railway.app)**
+
+- Connect your repo, set root directory to `backend`
 - Start command: `node src/index.js`
-- Add a persistent volume mounted at `/app/data` (Railway: Volume, Render: Disk)
+- Add a **persistent volume** mounted at `/app/data`
 - Set environment variables:
   ```env
   PORT=3001
   FRONTEND_URL=https://your-app.vercel.app
   NODE_ENV=production
+  STORAGE_ADAPTER=local
   ```
-- Copy the deployed backend URL (e.g. `https://petstay-backend.railway.app`)
 
 **2. Deploy the frontend on [Vercel](https://vercel.com)**
 
-- Connect your repo, set the root directory to `frontend`
-- Build command: `npm run build`
-- Output directory: `dist`
-- Add environment variable in Vercel dashboard:
+- Connect your repo, set root directory to `frontend`
+- Build command: `npm run build` · Output: `dist`
+- Add environment variable:
   ```env
   VITE_API_URL=https://petstay-backend.railway.app
   ```
-- Deploy — Vercel will bake the backend URL into the bundle at build time
 
-**3. Update the signing link base URL**
+**3. Set the signing link base URL**
 
-In the app settings page, set the **Base URL** to your Vercel frontend URL (e.g. `https://your-app.vercel.app`). This is used to generate QR Codes on signed contracts.
+In the app settings page, set **Base URL** to your Vercel frontend URL. This is embedded in QR Codes on signed contracts.
 
-### Environment variable summary
+---
 
-| Variable | Where | Purpose |
-|---|---|---|
-| `PORT` | backend `.env` | Backend port |
-| `FRONTEND_URL` | backend `.env` | CORS allowed origin |
-| `NODE_ENV` | backend `.env` | Environment |
-| `BACKEND_URL` | root `.env` | Vite dev proxy target (dev only) |
-| `VITE_API_URL` | Vercel dashboard / `.env` | Backend URL baked into production build |
+### Option B — Full Vercel deployment (frontend + backend + storage)
+
+Runs entirely on Vercel infrastructure. Requires Vercel Postgres and Vercel Blob add-ons.
+
+**1. Add storage to your Vercel project**
+
+In the Vercel dashboard → Storage tab:
+- Create a **Postgres** database and link it to your project
+- Create a **Blob** store and link it to your project
+
+Vercel automatically injects `POSTGRES_URL` and `BLOB_READ_WRITE_TOKEN` into your environment.
+
+**2. Deploy from this repo**
+
+Connect the repo root to Vercel (not a subdirectory — `vercel.json` handles routing).
+
+Add these environment variables in the Vercel dashboard:
+
+```env
+STORAGE_ADAPTER=vercel
+NODE_ENV=production
+FRONTEND_URL=https://your-app.vercel.app
+TRUST_PROXY=1
+```
+
+The frontend build also needs:
+```env
+VITE_API_URL=   # leave empty — the API is on the same domain (/api/...)
+```
+
+**3. Set the signing link base URL**
+
+Same as Option A — set **Base URL** in app settings to your Vercel URL.
+
+---
+
+### Environment variable reference
+
+| Variable | Default | Where | Purpose |
+|---|---|---|---|
+| `STORAGE_ADAPTER` | `local` | backend | `local` or `vercel` |
+| `PORT` | `3001` | backend | Backend port |
+| `FRONTEND_URL` | `http://localhost:5173` | backend | CORS allowed origin |
+| `NODE_ENV` | `development` | backend | Environment |
+| `TRUST_PROXY` | *(unset)* | backend | Set to `1` behind a reverse proxy (Vercel, Railway) |
+| `POSTGRES_URL` | *(unset)* | backend | Required when `STORAGE_ADAPTER=vercel` |
+| `BLOB_READ_WRITE_TOKEN` | *(unset)* | backend | Required when `STORAGE_ADAPTER=vercel` |
+| `BACKEND_URL` | `http://localhost:3001` | root `.env` | Vite dev proxy target (dev only) |
+| `VITE_API_URL` | *(unset)* | frontend build | Absolute backend URL for production builds |
 
 ---
 
@@ -219,9 +270,11 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for full guidelines.
 
 ## Data & Privacy
 
-All data is stored locally in `/backend/data/db.json`. Nothing is sent to external servers. Each hotel instance is fully independent.
+**Local adapter (default):** all data stays in `/backend/data/db.json` on your own machine or server. Nothing is sent to external services. Each hotel instance is fully independent.
 
-Uploaded files (vaccination proofs, signatures, PDFs) are stored in `/backend/data/uploads/` and `/backend/data/pdfs/`.
+**Vercel adapter:** data is stored in your own Vercel Postgres database and Vercel Blob store, linked to your Vercel account. No third-party services outside of Vercel are involved.
+
+Uploaded files (vaccination proofs, signatures, PDFs) go to `/backend/data/` locally or to your Vercel Blob store when using the Vercel adapter.
 
 ---
 
