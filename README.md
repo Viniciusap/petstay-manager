@@ -206,37 +206,63 @@ In the app settings page, set **Base URL** to your Vercel frontend URL. This is 
 
 ### Option B — Full Vercel deployment (frontend + backend + storage)
 
-Runs entirely on Vercel infrastructure. Requires Vercel Postgres and Vercel Blob add-ons.
+Runs entirely on Vercel. No external servers needed.
 
-**1. Add storage to your Vercel project**
+#### Prerequisites
 
-In the Vercel dashboard → Storage tab:
-- Create a **Postgres** database and link it to your project
-- Create a **Blob** store and link it to your project
+- A [Vercel](https://vercel.com) account (free tier works)
+- This repo pushed to GitHub
 
-Vercel automatically injects `POSTGRES_URL` and `BLOB_READ_WRITE_TOKEN` into your environment.
+#### Step 1 — Import the project on Vercel
 
-**2. Deploy from this repo**
+1. Go to [vercel.com/new](https://vercel.com/new)
+2. Click **Add New Project** → **Import Git Repository**
+3. Select your fork/copy of this repo
+4. **Important:** leave the root directory as `/` (do not change to `frontend` or `backend`) — the `vercel.json` at the root handles everything
+5. Click **Deploy** (it will fail the first time — that's expected, storage isn't configured yet)
 
-Connect the repo root to Vercel (not a subdirectory — `vercel.json` handles routing).
+#### Step 2 — Add Postgres
 
-Add these environment variables in the Vercel dashboard:
+1. In your Vercel project → **Storage** tab → **Create Database**
+2. Select **Postgres** → give it a name (e.g. `petstay-db`) → **Create**
+3. Click **Connect to Project** — Vercel automatically adds `POSTGRES_URL` and related variables to your environment
 
-```env
-STORAGE_ADAPTER=vercel
-NODE_ENV=production
-FRONTEND_URL=https://your-app.vercel.app
-TRUST_PROXY=1
-```
+#### Step 3 — Add Blob storage
 
-The frontend build also needs:
-```env
-VITE_API_URL=   # leave empty — the API is on the same domain (/api/...)
-```
+1. In **Storage** tab → **Create Database** again
+2. Select **Blob** → give it a name (e.g. `petstay-files`) → **Create**
+3. Click **Connect to Project** — Vercel automatically adds `BLOB_READ_WRITE_TOKEN`
 
-**3. Set the signing link base URL**
+#### Step 4 — Set environment variables
 
-Same as Option A — set **Base URL** in app settings to your Vercel URL.
+In your project → **Settings** → **Environment Variables**, add:
+
+| Variable | Value |
+|---|---|
+| `STORAGE_ADAPTER` | `vercel` |
+| `NODE_ENV` | `production` |
+| `FRONTEND_URL` | `https://your-app.vercel.app` *(your actual Vercel URL)* |
+| `TRUST_PROXY` | `1` |
+
+> `POSTGRES_URL` and `BLOB_READ_WRITE_TOKEN` are already set automatically by Vercel in Steps 2–3.
+
+#### Step 5 — Redeploy
+
+1. Go to the **Deployments** tab
+2. Click the three-dot menu on the latest deployment → **Redeploy**
+3. Wait for the build to finish — the app will be live at your Vercel URL
+
+#### Step 6 — First run
+
+Open the app. On first load, the backend creates all database tables automatically. Go through the onboarding wizard to configure your hotel name, logo, and settings.
+
+#### Step 7 — Set the signing link base URL
+
+In **Settings** → **Base URL**, enter your Vercel URL (e.g. `https://your-app.vercel.app`). This is embedded in QR Codes on every signed contract so clients can verify authenticity.
+
+---
+
+> **Note:** the Vercel free tier has limits — 100GB Blob storage, 256MB Postgres, 100GB-hours of serverless compute per month. For a single pet hotel, this is more than enough.
 
 ---
 
