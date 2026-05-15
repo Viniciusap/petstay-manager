@@ -6,7 +6,7 @@
     "start": "node src/index.js"
   },
   "dependencies": {
-    "@vercel/blob": "^0.29.0",
+    "@vercel/blob": "^2.3.3",
     "@vercel/postgres": "^0.10.0",
     "cors": "^2.8.5",
     "dotenv": "^16.0.0",
