@@ -41,32 +41,42 @@ async function createApp() {
   if (adapter === 'local') autoBackup();
 
   const app = express();
-  const FRONTEND_URL = process.env.FRONTEND_URL || 'http://localhost:5173';
   const isDev = process.env.NODE_ENV !== 'production';
+
+  // Support comma-separated origins and trim trailing slashes
+  const allowedOrigins = [
+    ...(process.env.FRONTEND_URL || 'http://localhost:5173')
+      .split(',')
+      .map(o => o.trim().replace(/\/$/, '')),
+    ...(isDev ? ['http://localhost:5173', 'http://localhost:5174'] : []),
+  ].filter(Boolean);
+
+  function isAllowed(origin) {
+    if (!origin) return true;
+    if (allowedOrigins.includes(origin)) return true;
+    // Accept Vercel preview deployments for the same project slug
+    const vercelPreview = /^https:\/\/[\w-]+-[\w]+-[\w-]+-[\w-]+\.vercel\.app$/;
+    if (process.env.ALLOW_VERCEL_PREVIEWS === '1' && vercelPreview.test(origin)) return true;
+    return false;
+  }
 
   app.use(helmet({
     crossOriginResourcePolicy: { policy: 'cross-origin' },
   }));
 
-  const allowedOrigins = isDev
-    ? [FRONTEND_URL, 'http://localhost:5173', 'http://localhost:5174']
-    : [FRONTEND_URL];
+  app.use(cors({
+    origin: (origin, cb) => cb(null, isAllowed(origin)),
+    credentials: true,
+  }));
 
+  // Block disallowed origins explicitly after cors sets headers
   app.use((req, res, next) => {
     const origin = req.headers.origin;
-    if (origin && !allowedOrigins.includes(origin)) {
+    if (origin && !isAllowed(origin)) {
       return res.status(403).json({ success: false, error: 'CORS: origin not allowed', code: 'CORS_BLOCKED' });
     }
     next();
   });
-
-  app.use(cors({
-    origin: (origin, cb) => {
-      if (!origin || allowedOrigins.includes(origin)) return cb(null, true);
-      cb(null, false);
-    },
-    credentials: true,
-  }));
 
   if (process.env.TRUST_PROXY) {
     app.set('trust proxy', parseInt(process.env.TRUST_PROXY, 10) || 1);
