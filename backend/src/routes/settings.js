@@ -3,11 +3,20 @@ const path = require('path');
 const router = express.Router();
 
 const bcrypt = require('bcryptjs');
+const rateLimit = require('express-rate-limit');
 const { readDb, updateSettings, getSetting } = require('../utils/db');
 const files = require('../utils/files');
 const { backupDb, listBackups, restoreBackup } = require('../utils/backup');
 const { logoUploader } = require('../middleware/upload');
 const { adapter } = require('../utils/storage');
+
+const passwordLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 5,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { success: false, error: 'Too many password attempts', code: 'RATE_LIMITED' },
+});
 
 const BACKUP_FNAME_RE = /^db_[\w\-]+\.json$/;
 
@@ -107,11 +116,11 @@ router.post('/assinatura', async (req, res, next) => {
   } catch (err) { next(err); }
 });
 
-router.post('/password', async (req, res, next) => {
+router.post('/password', passwordLimiter, async (req, res, next) => {
   try {
     const { senha_atual, senha_nova } = req.body;
-    if (!senha_nova || senha_nova.length < 6) {
-      return res.status(400).json({ success: false, error: 'Nova senha precisa ter ao menos 6 caracteres', code: 'PASSWORD_TOO_SHORT' });
+    if (!senha_nova || senha_nova.length < 8) {
+      return res.status(400).json({ success: false, error: 'Nova senha precisa ter ao menos 8 caracteres', code: 'PASSWORD_TOO_SHORT' });
     }
     const senhaHash = await getSetting('senha_hash');
     if (senhaHash) {

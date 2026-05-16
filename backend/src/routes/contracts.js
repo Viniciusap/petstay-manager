@@ -9,6 +9,18 @@ const { generateContractPdf } = require('../utils/pdfGenerator');
 const requireAuth = require('../middleware/requireAuth');
 
 const MAX_SIG_BYTES = 3 * 1024 * 1024;
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
+function maskIp(ip) {
+  if (!ip) return '';
+  // IPv4: keep first two octets only
+  const v4 = ip.match(/^(\d{1,3}\.\d{1,3})\.\d{1,3}\.\d{1,3}$/);
+  if (v4) return `${v4[1]}.x.x`;
+  // IPv6: keep first 3 groups
+  const v6parts = ip.split(':');
+  if (v6parts.length >= 4) return v6parts.slice(0, 3).join(':') + ':xxxx';
+  return ip.slice(0, 8) + '…';
+}
 
 async function getContractFull(contract) {
   const db = await readDb();
@@ -48,6 +60,9 @@ router.get('/:id', requireAuth, async (req, res, next) => {
 // Public: get by token
 router.get('/token/:token', async (req, res, next) => {
   try {
+    if (!UUID_RE.test(req.params.token)) {
+      return res.status(400).json({ success: false, error: 'Invalid token format', code: 'INVALID_TOKEN' });
+    }
     const db = await readDb();
     const contract = db.contracts.find(c => c.token_unico === req.params.token);
     if (!contract) return res.status(404).json({ success: false, error: 'Invalid token', code: 'INVALID_TOKEN' });
@@ -69,6 +84,9 @@ const signBodyParser = express.json({ limit: '4mb' });
 // Public: sign contract
 router.post('/sign/:token', signBodyParser, async (req, res, next) => {
   try {
+    if (!UUID_RE.test(req.params.token)) {
+      return res.status(400).json({ success: false, error: 'Invalid token format', code: 'INVALID_TOKEN' });
+    }
     const db = await readDb();
     const contract = db.contracts.find(c => c.token_unico === req.params.token);
     if (!contract) return res.status(404).json({ success: false, error: 'Invalid token', code: 'INVALID_TOKEN' });
@@ -90,10 +108,9 @@ router.post('/sign/:token', signBodyParser, async (req, res, next) => {
     const sigFilename = `contrato_${contract.id}_sig.png`;
     const savedSigPath = await files.saveFile(sigBuffer, `uploads/signatures/${sigFilename}`);
 
-    const ip = req.ip || req.socket.remoteAddress || '';
-    const userAgent = req.headers['user-agent'] || '';
+    const rawIp = req.ip || req.socket.remoteAddress || '';
     const timestamp = new Date().toISOString();
-    const hash = generateHash(contract.token_unico, nome_digitado.trim(), timestamp, ip);
+    const hash = generateHash(contract.token_unico, nome_digitado.trim(), timestamp, rawIp);
 
     await updateOne('contracts', contract.id, {
       status: 'assinado',
@@ -101,8 +118,7 @@ router.post('/sign/:token', signBodyParser, async (req, res, next) => {
       assinatura_path: savedSigPath,
       nome_digitado: nome_digitado.trim(),
       aceite_termos: true,
-      ip_assinante: ip,
-      user_agent: userAgent,
+      ip_assinante: maskIp(rawIp),
       hash_verificacao: hash,
     });
 
@@ -176,8 +192,8 @@ router.get('/:id/pdf/rascunho', requireAuth, async (req, res, next) => {
   } catch (err) { next(err); }
 });
 
-// Client (public) + admin: download final PDF after signing
-router.get('/:id/pdf/final', async (req, res, next) => {
+// Admin only: download final PDF
+router.get('/:id/pdf/final', requireAuth, async (req, res, next) => {
   try {
     const contract = await findById('contracts', req.params.id);
     if (!contract) return res.status(404).json({ success: false, error: 'Contract not found', code: 'NOT_FOUND' });
@@ -188,6 +204,25 @@ router.get('/:id/pdf/final', async (req, res, next) => {
       : await generateContractPdf(req.params.id, 'final');
 
     files.serveFile(res, pdfPath, `contrato_${req.params.id}_final.pdf`);
+  } catch (err) { next(err); }
+});
+
+// Public: client downloads their signed PDF using their signing token
+router.get('/pdf/by-token/:token', async (req, res, next) => {
+  try {
+    if (!UUID_RE.test(req.params.token)) {
+      return res.status(400).json({ success: false, error: 'Invalid token format', code: 'INVALID_TOKEN' });
+    }
+    const db = await readDb();
+    const contract = db.contracts.find(c => c.token_unico === req.params.token);
+    if (!contract) return res.status(404).json({ success: false, error: 'Contract not found', code: 'NOT_FOUND' });
+    if (contract.status !== 'assinado') return res.status(400).json({ success: false, error: 'Contract not signed yet', code: 'NOT_SIGNED' });
+
+    const pdfPath = (await files.fileExists(contract.pdf_final_path))
+      ? contract.pdf_final_path
+      : await generateContractPdf(contract.id, 'final');
+
+    files.serveFile(res, pdfPath, `contrato_assinado.pdf`);
   } catch (err) { next(err); }
 });
 

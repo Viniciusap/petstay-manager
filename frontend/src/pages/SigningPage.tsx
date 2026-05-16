@@ -101,7 +101,7 @@ export default function SigningPage() {
         nome_digitado: name.trim(),
         aceite_termos: true,
       });
-      setPdfPath(contractId ? `${apiBase}/contracts/${contractId}/pdf/final` : '');
+      setPdfPath(token ? `${apiBase}/contracts/pdf/by-token/${token}` : '');
       setState('success');
     } catch (err: any) {
       if (err?.code === 'ALREADY_SIGNED') setState('signed');
