@@ -35,6 +35,7 @@ export interface Animal {
   saude: { vacinas: string[]; alergias: string[]; observacoes: string };
   preferencias: { alimentacao: string; comportamento: string };
   arquivos_vacinacao: string[];
+  foto_path?: string | null;
   created_at: string;
   bookings?: Booking[];
 }

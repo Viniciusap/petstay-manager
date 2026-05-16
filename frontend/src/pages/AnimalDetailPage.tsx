@@ -30,6 +30,8 @@ export default function AnimalDetailPage() {
   const [newVacina, setNewVacina] = useState('');
   const [newAlergia, setNewAlergia] = useState('');
   const [uploading, setUploading] = useState(false);
+  const [uploadingFoto, setUploadingFoto] = useState(false);
+  const fotoInputRef = useRef<HTMLInputElement>(null);
 
   function load() {
     api.get(`/animals/${id}`).then((r: any) => {
@@ -82,6 +84,26 @@ export default function AnimalDetailPage() {
     load();
   }
 
+  async function uploadFoto(file: File) {
+    setUploadingFoto(true);
+    const fd = new FormData();
+    fd.append('foto', file);
+    try {
+      await api.post(`/animals/${id}/foto`, fd);
+      toast('Foto atualizada!');
+      load();
+    } catch { toast('Erro no upload', 'error'); }
+    finally { setUploadingFoto(false); }
+  }
+
+  async function removeFoto() {
+    try {
+      await api.delete(`/animals/${id}/foto`);
+      toast('Foto removida');
+      load();
+    } catch { toast('Erro', 'error'); }
+  }
+
   async function uploadVacina(file: File) {
     setUploading(true);
     const fd = new FormData();
@@ -112,7 +134,17 @@ export default function AnimalDetailPage() {
       {/* Header */}
       <Card>
         <div className="flex items-center gap-4">
-          <Avatar species={animal.especie} size="lg" />
+          <div className="relative group cursor-pointer" onClick={() => !animal.foto_path && fotoInputRef.current?.click()}>
+            <Avatar species={animal.especie as any} size="lg" foto={animal.foto_path} />
+            <div
+              className="absolute inset-0 rounded-full flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity text-white text-xs font-medium"
+              style={{ background: 'rgba(0,0,0,0.5)' }}
+              onClick={e => { e.stopPropagation(); fotoInputRef.current?.click(); }}
+            >
+              {uploadingFoto ? '...' : '📷'}
+            </div>
+          </div>
+          <input ref={fotoInputRef} type="file" accept="image/*" className="hidden" onChange={e => e.target.files?.[0] && uploadFoto(e.target.files[0])} />
           <div className="flex-1">
             {editing
               ? <Input value={form.nome || ''} onChange={e => setForm(f => ({ ...f, nome: e.target.value }))} />
@@ -124,7 +156,10 @@ export default function AnimalDetailPage() {
           </div>
           {editing
             ? <div className="flex gap-2"><Button size="sm" loading={saving} onClick={save}>{t('common.save')}</Button><Button size="sm" variant="ghost" onClick={() => setEditing(false)}>{t('common.cancel')}</Button></div>
-            : <Button size="sm" variant="outline" onClick={() => setEditing(true)}>{t('common.edit')}</Button>
+            : <div className="flex gap-2">
+                <Button size="sm" variant="outline" onClick={() => setEditing(true)}>{t('common.edit')}</Button>
+                {animal.foto_path && <Button size="sm" variant="ghost" onClick={removeFoto}>🗑</Button>}
+              </div>
           }
         </div>
       </Card>

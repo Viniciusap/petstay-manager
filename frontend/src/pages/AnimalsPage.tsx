@@ -77,7 +77,7 @@ export default function AnimalsPage() {
                   style={{ borderColor: 'var(--border)', background: 'var(--bg-card)' }}
                   onClick={() => navigate(`/animals/${a.id}`)}
                 >
-                  <Avatar species={a.especie} />
+                  <Avatar species={a.especie} foto={(a as any).foto_path} />
                   <div className="flex-1 min-w-0">
                     <p className="font-semibold text-sm truncate" style={{ color: 'var(--text-primary)' }}>{a.nome}</p>
                     <p className="text-xs" style={{ color: 'var(--text-secondary)' }}>{a.especie}{a.raca ? ` · ${a.raca}` : ''}</p>

@@ -5,7 +5,7 @@ const router = express.Router();
 const { getCollection, findById, insertOne, updateOne, deleteOne, findWhere } = require('../utils/db');
 const files = require('../utils/files');
 const { requireFields } = require('../middleware/validate');
-const { vaccinaUploader } = require('../middleware/upload');
+const { vaccinaUploader, photoUploader } = require('../middleware/upload');
 
 function sanitizeFilename(fname) {
   if (!fname || /[/\\]/.test(fname) || fname.includes('..')) {
@@ -108,6 +108,36 @@ router.delete('/:id/vacina/:fname', async (req, res, next) => {
     const updated = await updateOne('animals', req.params.id, {
       arquivos_vacinacao: (animal.arquivos_vacinacao || []).filter(p => p !== storedPath),
     });
+    res.json({ success: true, data: updated });
+  } catch (err) { next(err); }
+});
+
+// Profile photo
+router.post('/:id/foto', (req, res, next) => {
+  photoUploader.single('foto')(req, res, async err => {
+    if (err) return next(err);
+    if (!req.file) return res.status(400).json({ success: false, error: 'No file', code: 'NO_FILE' });
+    try {
+      const animal = await findById('animals', req.params.id);
+      if (!animal) return res.status(404).json({ success: false, error: 'Animal not found', code: 'NOT_FOUND' });
+
+      // Delete old photo if exists
+      if (animal.foto_path) await files.deleteFile(animal.foto_path).catch(() => {});
+
+      const ext = path.extname(req.file.originalname).toLowerCase() || '.jpg';
+      const savedPath = await files.saveFile(req.file.buffer, `uploads/animal_${req.params.id}/foto${ext}`);
+      const updated = await updateOne('animals', req.params.id, { foto_path: savedPath });
+      res.json({ success: true, data: updated });
+    } catch (e) { next(e); }
+  });
+});
+
+router.delete('/:id/foto', async (req, res, next) => {
+  try {
+    const animal = await findById('animals', req.params.id);
+    if (!animal) return res.status(404).json({ success: false, error: 'Animal not found', code: 'NOT_FOUND' });
+    if (animal.foto_path) await files.deleteFile(animal.foto_path).catch(() => {});
+    const updated = await updateOne('animals', req.params.id, { foto_path: null });
     res.json({ success: true, data: updated });
   } catch (err) { next(err); }
 });

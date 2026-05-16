@@ -169,7 +169,7 @@ export default function BookingDetailPage() {
       {/* Animal + Tutor */}
       <Card>
         <div className="flex items-center gap-4">
-          <Avatar species={booking.animal?.especie} size="lg" />
+          <Avatar species={booking.animal?.especie} size="lg" foto={(booking.animal as any)?.foto_path} />
           <div>
             <p className="text-lg font-bold" style={{ color: 'var(--text-primary)' }}>{booking.animal?.nome ?? '—'}</p>
             <p className="text-sm" style={{ color: 'var(--text-secondary)' }}>{booking.animal?.especie} · {booking.animal?.raca}</p>
@@ -271,9 +271,26 @@ export default function BookingDetailPage() {
           className="hidden"
           onChange={e => e.target.files && uploadPhotos(e.target.files)}
         />
-        <Button size="sm" variant="secondary" loading={uploadingPhotos} onClick={() => photoInputRef.current?.click()}>
-          📷 {uploadingPhotos ? 'Enviando...' : 'Adicionar fotos'}
-        </Button>
+        <div className="flex flex-wrap gap-2">
+          <Button size="sm" variant="secondary" loading={uploadingPhotos} onClick={() => photoInputRef.current?.click()}>
+            📷 {uploadingPhotos ? 'Enviando...' : 'Adicionar fotos'}
+          </Button>
+          {(booking.animal as any)?.foto_path && (
+            <Button size="sm" variant="ghost" onClick={async () => {
+              try {
+                const fd = new FormData();
+                const resp = await fetch(resolveFileUrl((booking.animal as any).foto_path) ?? '');
+                const blob = await resp.blob();
+                fd.append('photos', blob, 'foto_perfil.jpg');
+                await api.post(`/bookings/${id}/galeria`, fd);
+                toast('Foto de perfil incluída na galeria!');
+                await load();
+              } catch { toast('Erro ao incluir foto', 'error'); }
+            }}>
+              🐾 Incluir foto de perfil
+            </Button>
+          )}
+        </div>
 
         {booking.galeria_token && (
           <p className="text-xs mt-2" style={{ color: 'var(--text-muted)' }}>
