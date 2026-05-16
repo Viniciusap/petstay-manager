@@ -1,5 +1,5 @@
 import { useEffect, useState, useRef } from 'react';
-import api from '../lib/api';
+import api, { resolveFileUrl } from '../lib/api';
 import { useTranslation } from '../contexts/TranslationContext';
 import { useTheme } from '../contexts/ThemeContext';
 import { useToast } from '../contexts/ToastContext';
@@ -173,12 +173,12 @@ export default function SettingsPage() {
         setClausulas(cl || []);
         setHotelRepName(sRes.data.nome_hotel_assinante || '');
         if (sRes.data.assinatura_hotel_path) {
-          const sigPath = sRes.data.assinatura_hotel_path;
-          setHotelSigPreview(sigPath.startsWith('http') ? `${sigPath}?t=${Date.now()}` : `/${sigPath}?t=${Date.now()}`);
+          const url = resolveFileUrl(sRes.data.assinatura_hotel_path);
+          if (url) setHotelSigPreview(`${url}?t=${Date.now()}`);
         }
         if (sRes.data.logo_path) {
-          const lp = sRes.data.logo_path;
-          setLogoPreview(lp.startsWith('http') ? lp : `/uploads/logo/${lp.split('/').pop()}`);
+          const url = resolveFileUrl(sRes.data.logo_path);
+          if (url) setLogoPreview(url);
         }
       })
       .finally(() => setLoading(false));
