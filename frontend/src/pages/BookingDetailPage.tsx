@@ -1,6 +1,7 @@
 import { useEffect, useState, useRef } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import api, { apiBase, resolveFileUrl, backendBase } from '../lib/api';
+import { useAuth } from '../contexts/AuthContext';
 import { useTranslation } from '../contexts/TranslationContext';
 import { useToast } from '../contexts/ToastContext';
 import Button from '../components/ui/Button';
@@ -47,6 +48,7 @@ function paymentBadge(s: string) {
 
 export default function BookingDetailPage() {
   const { id } = useParams<{ id: string }>();
+  const { token: authToken } = useAuth();
   const { t } = useTranslation();
   const { toast } = useToast();
   const navigate = useNavigate();
@@ -87,6 +89,19 @@ export default function BookingDetailPage() {
       setActing(false);
       setConfirm(null);
     }
+  }
+
+  async function downloadPdf(url: string, filename: string) {
+    try {
+      const res = await fetch(url, { headers: { Authorization: `Bearer ${authToken}` } });
+      if (!res.ok) throw new Error('Erro ao baixar PDF');
+      const blob = await res.blob();
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(blob);
+      a.download = filename;
+      a.click();
+      URL.revokeObjectURL(a.href);
+    } catch { toast('Erro ao baixar PDF', 'error'); }
   }
 
   async function uploadPhotos(files: FileList) {
@@ -216,13 +231,13 @@ export default function BookingDetailPage() {
               </div>
             )}
             <div className="flex flex-wrap gap-2">
-              <a href={`${apiBase}/contracts/${contract.id}/pdf/rascunho`} target="_blank" rel="noreferrer">
-                <Button size="sm" variant="ghost">📄 PDF Rascunho</Button>
-              </a>
+              <Button size="sm" variant="ghost" onClick={() => downloadPdf(`${apiBase}/contracts/${contract.id}/pdf/rascunho`, `contrato_${contract.id}_rascunho.pdf`)}>
+                📄 PDF Rascunho
+              </Button>
               {contractSigned && (
-                <a href={`${apiBase}/contracts/${contract.id}/pdf/final`} target="_blank" rel="noreferrer">
-                  <Button size="sm" variant="secondary">📄 PDF Final</Button>
-                </a>
+                <Button size="sm" variant="secondary" onClick={() => downloadPdf(`${apiBase}/contracts/${contract.id}/pdf/final`, `contrato_${contract.id}_final.pdf`)}>
+                  📄 PDF Final
+                </Button>
               )}
             </div>
             {contractSigned && (
