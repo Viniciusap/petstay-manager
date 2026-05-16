@@ -1,6 +1,6 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useRef } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import api, { apiBase } from '../lib/api';
+import api, { apiBase, resolveFileUrl, backendBase } from '../lib/api';
 import { useTranslation } from '../contexts/TranslationContext';
 import { useToast } from '../contexts/ToastContext';
 import Button from '../components/ui/Button';
@@ -12,10 +12,14 @@ import Avatar from '../components/ui/Avatar';
 import type { Booking, Contract, Settings, Animal, Tutor } from '../types';
 
 // The GET /bookings/:id endpoint embeds animal, tutor, and contract
+interface GaleriaItem { path: string; uploaded_at: string; }
+
 interface BookingDetail extends Omit<Booking, 'animal' | 'tutor' | 'contract'> {
   animal: Animal | null;
   tutor: Tutor | null;
   contract: Contract | null;
+  galeria?: GaleriaItem[];
+  galeria_token?: string;
 }
 
 function fmtDate(iso: string) { return new Date(iso).toLocaleDateString('pt-BR'); }
@@ -53,6 +57,8 @@ export default function BookingDetailPage() {
   const [confirm, setConfirm] = useState<null | { action: string; label: string; msg: string }>(null);
   const [acting, setActing] = useState(false);
   const [regenerating, setRegenerating] = useState(false);
+  const [uploadingPhotos, setUploadingPhotos] = useState(false);
+  const photoInputRef = useRef<HTMLInputElement>(null);
 
   function load() {
     return Promise.all([
@@ -81,6 +87,33 @@ export default function BookingDetailPage() {
       setActing(false);
       setConfirm(null);
     }
+  }
+
+  async function uploadPhotos(files: FileList) {
+    if (!files.length) return;
+    setUploadingPhotos(true);
+    try {
+      const form = new FormData();
+      Array.from(files).forEach(f => form.append('photos', f));
+      await api.post(`/bookings/${id}/galeria`, form);
+      toast('Fotos enviadas!');
+      await load();
+    } catch { toast('Erro ao enviar fotos', 'error'); }
+    finally { setUploadingPhotos(false); }
+  }
+
+  async function removePhoto(index: number) {
+    try {
+      await api.delete(`/bookings/${id}/galeria/${index}`);
+      toast('Foto removida');
+      await load();
+    } catch { toast('Erro ao remover foto', 'error'); }
+  }
+
+  function copyGaleriaLink() {
+    if (!booking?.galeria_token) return;
+    const url = `${window.location.origin}/galeria?t=${booking.galeria_token}`;
+    navigator.clipboard.writeText(url).then(() => toast('Link da galeria copiado!'));
   }
 
   async function regenerateToken() {
@@ -198,6 +231,54 @@ export default function BookingDetailPage() {
               </p>
             )}
           </div>
+        )}
+      </Card>
+
+      {/* Gallery */}
+      <Card>
+        <div className="flex items-center justify-between mb-3">
+          <p className="font-semibold" style={{ color: 'var(--text-primary)' }}>🐾 Galeria de Fotos</p>
+          {booking.galeria_token && (
+            <Button size="sm" variant="ghost" onClick={copyGaleriaLink}>🔗 Compartilhar</Button>
+          )}
+        </div>
+
+        {booking.galeria?.length ? (
+          <div className="grid grid-cols-3 gap-2 mb-3">
+            {booking.galeria.map((item, i) => {
+              const url = resolveFileUrl(item.path);
+              return (
+                <div key={i} className="relative group aspect-square rounded-xl overflow-hidden" style={{ border: '1px solid var(--border)' }}>
+                  <img src={url ?? ''} alt={`Foto ${i + 1}`} className="w-full h-full object-cover" />
+                  <button
+                    onClick={() => removePhoto(i)}
+                    className="absolute top-1 right-1 w-6 h-6 rounded-full flex items-center justify-center text-white text-xs opacity-0 group-hover:opacity-100 transition-opacity"
+                    style={{ background: 'rgba(0,0,0,0.6)' }}
+                  >✕</button>
+                </div>
+              );
+            })}
+          </div>
+        ) : (
+          <p className="text-sm mb-3" style={{ color: 'var(--text-muted)' }}>Nenhuma foto ainda. Envie fotos do {booking.animal?.nome || 'pet'} durante a estadia!</p>
+        )}
+
+        <input
+          ref={photoInputRef}
+          type="file"
+          accept="image/*"
+          multiple
+          className="hidden"
+          onChange={e => e.target.files && uploadPhotos(e.target.files)}
+        />
+        <Button size="sm" variant="secondary" loading={uploadingPhotos} onClick={() => photoInputRef.current?.click()}>
+          📷 {uploadingPhotos ? 'Enviando...' : 'Adicionar fotos'}
+        </Button>
+
+        {booking.galeria_token && (
+          <p className="text-xs mt-2" style={{ color: 'var(--text-muted)' }}>
+            Link enviado ao tutor via "Compartilhar" · abre galeria pública sem login
+          </p>
         )}
       </Card>
 

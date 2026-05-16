@@ -2,8 +2,11 @@ const express = require('express');
 const router = express.Router();
 const { v4: uuidv4 } = require('uuid');
 
+const path = require('path');
 const { readDb, getCollection, findById, insertOne, updateOne, deleteOne, findWhere, getSetting } = require('../utils/db');
 const { requireFields } = require('../middleware/validate');
+const { photoUploader } = require('../middleware/upload');
+const files = require('../utils/files');
 
 function calcTotal(dataEntrada, dataSaida, valorDiaria, servicos = []) {
   const ms = new Date(dataSaida) - new Date(dataEntrada);
@@ -150,6 +153,52 @@ router.delete('/:id', async (req, res, next) => {
     const booking = await updateOne('bookings', req.params.id, { status_presenca: 'cancelado' });
     if (!booking) return res.status(404).json({ success: false, error: 'Booking not found', code: 'NOT_FOUND' });
     res.json({ success: true, data: booking });
+  } catch (err) { next(err); }
+});
+
+// Gallery — upload photos to booking
+router.post('/:id/galeria', (req, res, next) => {
+  photoUploader.array('photos', 20)(req, res, async err => {
+    if (err) return next(err);
+    if (!req.files?.length) return res.status(400).json({ success: false, error: 'No files', code: 'NO_FILE' });
+    try {
+      const booking = await findById('bookings', req.params.id);
+      if (!booking) return res.status(404).json({ success: false, error: 'Booking not found', code: 'NOT_FOUND' });
+
+      const savedPaths = await Promise.all(
+        req.files.map((f, i) => {
+          const ext = path.extname(f.originalname).toLowerCase() || '.jpg';
+          return files.saveFile(f.buffer, `uploads/galeria/${req.params.id}/${Date.now()}_${i}${ext}`);
+        })
+      );
+
+      const galeria = [
+        ...(booking.galeria || []),
+        ...savedPaths.map(p => ({ path: p, uploaded_at: new Date().toISOString() })),
+      ];
+      const galeria_token = booking.galeria_token || uuidv4();
+      const updated = await updateOne('bookings', req.params.id, { galeria, galeria_token });
+      res.json({ success: true, data: updated });
+    } catch (e) { next(e); }
+  });
+});
+
+// Gallery — remove single photo
+router.delete('/:id/galeria/:index', async (req, res, next) => {
+  try {
+    const booking = await findById('bookings', req.params.id);
+    if (!booking) return res.status(404).json({ success: false, error: 'Booking not found', code: 'NOT_FOUND' });
+
+    const idx = parseInt(req.params.index, 10);
+    const galeria = [...(booking.galeria || [])];
+    if (isNaN(idx) || idx < 0 || idx >= galeria.length) {
+      return res.status(404).json({ success: false, error: 'Photo not found', code: 'NOT_FOUND' });
+    }
+
+    await files.deleteFile(galeria[idx].path);
+    galeria.splice(idx, 1);
+    const updated = await updateOne('bookings', req.params.id, { galeria });
+    res.json({ success: true, data: updated });
   } catch (err) { next(err); }
 });
 

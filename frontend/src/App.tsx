@@ -23,6 +23,7 @@ import CalendarPage from './pages/CalendarPage';
 import SettingsPage from './pages/SettingsPage';
 import SigningPage from './pages/SigningPage';
 import VerifyPage from './pages/VerifyPage';
+import GaleriaPage from './pages/GaleriaPage';
 
 function RequireAuth({ children }: { children: React.ReactNode }) {
   const { isAuthenticated } = useAuth();
@@ -62,6 +63,7 @@ export default function App() {
                 <Route path="/setup" element={<OnboardingPage />} />
                 <Route path="/assinar" element={<SigningPage />} />
                 <Route path="/verificar" element={<VerifyPage />} />
+                <Route path="/galeria" element={<GaleriaPage />} />
 
                 {/* Admin routes */}
                 <Route element={<RequireAuth><AppShell /></RequireAuth>}>

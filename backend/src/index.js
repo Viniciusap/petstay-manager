@@ -13,6 +13,7 @@ const errorHandler = require('./middleware/errorHandler');
 
 const requireAuth = require('./middleware/requireAuth');
 const authRouter = require('./routes/auth');
+const galeriaRouter = require('./routes/galeria');
 const settingsRouter = require('./routes/settings');
 const tutorsRouter = require('./routes/tutors');
 const animalsRouter = require('./routes/animals');
@@ -101,6 +102,9 @@ async function createApp() {
 
   // Auth — public
   app.use('/api/auth', authRouter);
+
+  // Gallery — public (token-gated at route level)
+  app.use('/api/galeria', galeriaRouter);
 
   // Public contract endpoints (client-facing, token-gated at route level)
   app.use('/api/contracts/token', publicLimiter);
