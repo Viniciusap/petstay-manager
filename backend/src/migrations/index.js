@@ -15,14 +15,16 @@ function isVersionGreater(a, b) {
 }
 
 async function runMigrations() {
-  if (adapter !== 'local') return; // schema managed by ensureDb() in each adapter
-  const db = readDb();
+  const db = await readDb();
   const dbVersion = db.version || '0.0.0';
 
   if (dbVersion === APP_VERSION) return;
 
-  console.log(`Backing up before migration...`);
-  backupDb(`pre_migration_${dbVersion}_to_${APP_VERSION}`);
+  if (adapter === 'local') {
+    console.log(`Backing up before migration...`);
+    backupDb(`pre_migration_${dbVersion}_to_${APP_VERSION}`);
+  }
+
   console.log(`Migrating db: ${dbVersion} → ${APP_VERSION}`);
 
   const migrations = [
@@ -33,7 +35,7 @@ async function runMigrations() {
   for (const migration of migrations) {
     if (isVersionGreater(migration.version, dbVersion)) {
       await migration.run(readDb, writeDb);
-      const current = readDb();
+      const current = await readDb();
       await writeDb({ ...current, version: migration.version });
       console.log(`Migration ${migration.version} done`);
     }

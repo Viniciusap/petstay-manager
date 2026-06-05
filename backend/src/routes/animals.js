@@ -50,7 +50,9 @@ router.post('/', requireFields(['tutor_id', 'nome', 'especie']), async (req, res
 
 router.put('/:id', async (req, res, next) => {
   try {
-    const animal = await updateOne('animals', req.params.id, req.body);
+    // Block fields managed by dedicated endpoints
+    const { id: _id, created_at: _ca, foto_path: _fp, arquivos_vacinacao: _av, ...safe } = req.body;
+    const animal = await updateOne('animals', req.params.id, safe);
     if (!animal) return res.status(404).json({ success: false, error: 'Animal not found', code: 'NOT_FOUND' });
     res.json({ success: true, data: animal });
   } catch (err) { next(err); }

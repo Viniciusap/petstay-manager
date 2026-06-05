@@ -2,8 +2,10 @@ const express = require('express');
 const router = express.Router();
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
+const { v4: uuidv4 } = require('uuid');
 const rateLimit = require('express-rate-limit');
 const { getSetting, updateSettings } = require('../utils/db');
+const { revoke } = require('../utils/tokenRevocation');
 
 const SALT_ROUNDS = 12;
 
@@ -62,7 +64,8 @@ router.post('/login', loginLimiter, async (req, res, next) => {
     }
 
     const expiry = process.env.JWT_EXPIRY || '7d';
-    const token = jwt.sign({ role: 'admin' }, secret(), { expiresIn: expiry });
+    const jti = uuidv4();
+    const token = jwt.sign({ role: 'admin', jti }, secret(), { expiresIn: expiry });
     const decoded = jwt.decode(token);
 
     res.json({ success: true, data: { token, expiresAt: new Date(decoded.exp * 1000).toISOString(), firstLogin: isFirstLogin } });
@@ -78,6 +81,17 @@ router.get('/me', (req, res) => {
   } catch {
     res.json({ success: true, data: { authenticated: false } });
   }
+});
+
+router.post('/logout', (req, res) => {
+  const header = req.headers.authorization;
+  if (header?.startsWith('Bearer ')) {
+    try {
+      const payload = jwt.verify(header.slice(7), secret());
+      if (payload.jti) revoke(payload.jti, payload.exp * 1000);
+    } catch {}
+  }
+  res.json({ success: true });
 });
 
 module.exports = router;

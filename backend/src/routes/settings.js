@@ -29,8 +29,19 @@ router.get('/', async (_req, res, next) => {
 
 router.put('/', async (req, res, next) => {
   try {
-    const { logo_path: _lp, onboarding_completo: _oc, ...safe } = req.body;
-    const settings = await updateSettings({ ...safe, ...(req.body.onboarding_completo !== undefined ? { onboarding_completo: req.body.onboarding_completo } : {}) });
+    // Block fields that have dedicated endpoints or must never be overwritten via generic PUT
+    const {
+      logo_path: _lp,
+      assinatura_hotel_path: _ahp,
+      nome_hotel_assinante: _nha,
+      senha_hash: _sh,
+      onboarding_completo: _oc,
+      ...safe
+    } = req.body;
+    const settings = await updateSettings({
+      ...safe,
+      ...(req.body.onboarding_completo !== undefined ? { onboarding_completo: req.body.onboarding_completo } : {}),
+    });
     res.json({ success: true, data: settings });
   } catch (err) { next(err); }
 });

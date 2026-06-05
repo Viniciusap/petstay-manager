@@ -1,4 +1,5 @@
 const jwt = require('jsonwebtoken');
+const { isRevoked } = require('../utils/tokenRevocation');
 
 function getSecret() {
   const s = process.env.JWT_SECRET;
@@ -12,7 +13,11 @@ module.exports = function requireAuth(req, res, next) {
     return res.status(401).json({ success: false, error: 'Authentication required', code: 'UNAUTHORIZED' });
   }
   try {
-    req.user = jwt.verify(header.slice(7), getSecret());
+    const payload = jwt.verify(header.slice(7), getSecret());
+    if (payload.jti && isRevoked(payload.jti)) {
+      return res.status(401).json({ success: false, error: 'Session was logged out', code: 'TOKEN_REVOKED' });
+    }
+    req.user = payload;
     next();
   } catch (err) {
     const code = err.name === 'TokenExpiredError' ? 'TOKEN_EXPIRED' : 'INVALID_TOKEN';

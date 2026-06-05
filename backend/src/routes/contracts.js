@@ -22,11 +22,11 @@ function maskIp(ip) {
   return ip.slice(0, 8) + '…';
 }
 
-async function getContractFull(contract) {
-  const db = await readDb();
-  const booking = await findById('bookings', contract.booking_id);
-  const animal = booking ? await findById('animals', booking.animal_id) : null;
-  const tutor = booking ? await findById('tutors', booking.tutor_id) : null;
+async function getContractFull(contract, db = null) {
+  if (!db) db = await readDb();
+  const booking = db.bookings?.find(b => b.id === contract.booking_id) || null;
+  const animal = booking ? db.animals?.find(a => a.id === booking.animal_id) || null : null;
+  const tutor = booking ? db.tutors?.find(t => t.id === booking.tutor_id) || null : null;
   return { contract, booking, animal, tutor, settings: db.settings };
 }
 
@@ -51,9 +51,10 @@ function parseSigBuffer(assinatura_base64) {
 // Admin: get by ID
 router.get('/:id', requireAuth, async (req, res, next) => {
   try {
-    const contract = await findById('contracts', req.params.id);
+    const db = await readDb();
+    const contract = db.contracts?.find(c => c.id === req.params.id) || null;
     if (!contract) return res.status(404).json({ success: false, error: 'Contract not found', code: 'NOT_FOUND' });
-    res.json({ success: true, data: await getContractFull(contract) });
+    res.json({ success: true, data: await getContractFull(contract, db) });
   } catch (err) { next(err); }
 });
 
@@ -75,7 +76,7 @@ router.get('/token/:token', async (req, res, next) => {
       await updateOne('contracts', contract.id, { status: 'visualizado', data_visualizacao: new Date().toISOString() });
     }
 
-    res.json({ success: true, data: await getContractFull(contract) });
+    res.json({ success: true, data: await getContractFull(contract, db) });
   } catch (err) { next(err); }
 });
 

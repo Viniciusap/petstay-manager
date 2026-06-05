@@ -49,6 +49,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }
 
   function logout() {
+    api.post('/auth/logout').catch(() => {}); // revoke jti server-side (fire-and-forget)
     localStorage.removeItem(KEY);
     setState({ token: null, expiresAt: null });
   }

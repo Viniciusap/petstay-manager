@@ -90,7 +90,7 @@ async function createApp() {
     app.set('trust proxy', parseInt(process.env.TRUST_PROXY, 10) || 1);
   }
 
-  app.use(express.json({ limit: '1mb' }));
+  app.use(express.json({ limit: '4mb' }));
 
   if (adapter === 'local' && DATA_DIR) {
     app.use('/uploads', express.static(path.join(DATA_DIR, 'uploads')));

@@ -17,7 +17,7 @@ const CLAUSULAS_EN = [
 ];
 
 module.exports = async function migrate_v1_0_1(readDb, writeDb) {
-  const db = readDb();
+  const db = await readDb();
 
   // Fix base_url default — should point to frontend, not backend
   if (db.settings.base_url === 'http://localhost:3001') {

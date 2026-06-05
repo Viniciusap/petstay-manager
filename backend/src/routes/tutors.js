@@ -51,6 +51,10 @@ router.delete('/:id', async (req, res, next) => {
     if (activeBookings.length > 0) {
       return res.status(409).json({ success: false, error: 'Tutor has active bookings', code: 'HAS_ACTIVE_BOOKINGS' });
     }
+    const animals = await findWhere('animals', { tutor_id: req.params.id });
+    if (animals.length > 0) {
+      return res.status(409).json({ success: false, error: 'Tutor has registered animals', code: 'HAS_ANIMALS' });
+    }
     const deleted = await deleteOne('tutors', req.params.id);
     if (!deleted) return res.status(404).json({ success: false, error: 'Tutor not found', code: 'NOT_FOUND' });
     res.json({ success: true, data: { deleted: true } });
