@@ -1,6 +1,6 @@
 const express = require('express');
 const router = express.Router();
-const { getCollection, findById, readDb } = require('../utils/db');
+const { findWhere, findById, readDb } = require('../utils/db');
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
@@ -10,8 +10,8 @@ router.get('/:token', async (req, res, next) => {
       return res.status(400).json({ success: false, error: 'Invalid token', code: 'INVALID_TOKEN' });
     }
 
-    const bookings = await getCollection('bookings');
-    const booking = bookings.find(b => b.galeria_token === req.params.token);
+    const matches = await findWhere('bookings', { galeria_token: req.params.token });
+    const booking = matches[0] || null;
     if (!booking || !booking.galeria?.length) {
       return res.status(404).json({ success: false, error: 'Gallery not found', code: 'NOT_FOUND' });
     }

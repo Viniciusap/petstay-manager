@@ -111,7 +111,10 @@ export default function SigningPage() {
     }
   }
 
-  const clausulas = lang === 'en' ? CLAUSULAS_EN : CLAUSULAS_PT;
+  // Prefer server-side clauses (customized by hotel); fall back to defaults if not set
+  const clausulas = lang === 'en'
+    ? (settings?.clausulas_en?.length ? settings.clausulas_en : CLAUSULAS_EN)
+    : (settings?.clausulas_pt?.length ? settings.clausulas_pt : CLAUSULAS_PT);
   const canSign = accepted && !canvasEmpty && name.trim().length >= 3;
 
   if (state === 'loading') {

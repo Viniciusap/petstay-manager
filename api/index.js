@@ -6,5 +6,5 @@ module.exports = (req, res) => {
   if (!appPromise) appPromise = createApp();
   appPromise
     .then(app => app(req, res))
-    .catch(err => res.status(500).json({ success: false, error: err.message }));
+    .catch(() => res.status(500).json({ success: false, error: 'Service unavailable', code: 'STARTUP_FAILED' }));
 };

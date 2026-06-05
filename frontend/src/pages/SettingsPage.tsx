@@ -23,7 +23,7 @@ function PasswordSection() {
   const [saving, setSaving] = useState(false);
 
   async function save() {
-    if (nova.length < 6) { setErr('Mínimo 6 caracteres'); return; }
+    if (nova.length < 8) { setErr('Mínimo 8 caracteres'); return; }
     if (nova !== confirma) { setErr('Senhas não coincidem'); return; }
     setSaving(true); setErr('');
     try {

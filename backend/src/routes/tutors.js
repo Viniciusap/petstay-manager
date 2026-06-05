@@ -38,7 +38,8 @@ router.post('/', requireFields(['nome', 'telefone']), async (req, res, next) => 
 
 router.put('/:id', async (req, res, next) => {
   try {
-    const tutor = await updateOne('tutors', req.params.id, req.body);
+    const { id: _id, created_at: _ca, ...safe } = req.body;
+    const tutor = await updateOne('tutors', req.params.id, safe);
     if (!tutor) return res.status(404).json({ success: false, error: 'Tutor not found', code: 'NOT_FOUND' });
     res.json({ success: true, data: tutor });
   } catch (err) { next(err); }
