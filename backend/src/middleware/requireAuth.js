@@ -8,12 +8,12 @@ function getSecret() {
 }
 
 module.exports = function requireAuth(req, res, next) {
-  const header = req.headers.authorization;
-  if (!header?.startsWith('Bearer ')) {
+  const token = req.cookies?.petstay_token || req.headers.authorization?.replace(/^Bearer\s+/, '');
+  if (!token) {
     return res.status(401).json({ success: false, error: 'Authentication required', code: 'UNAUTHORIZED' });
   }
   try {
-    const payload = jwt.verify(header.slice(7), getSecret());
+    const payload = jwt.verify(token, getSecret());
     if (payload.jti && isRevoked(payload.jti)) {
       return res.status(401).json({ success: false, error: 'Session was logged out', code: 'TOKEN_REVOKED' });
     }

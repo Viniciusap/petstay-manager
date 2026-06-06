@@ -26,26 +26,26 @@ import VerifyPage from './pages/VerifyPage';
 import GaleriaPage from './pages/GaleriaPage';
 
 function RequireAuth({ children }: { children: React.ReactNode }) {
-  const { isAuthenticated } = useAuth();
+  const { isAuthenticated, loading: authLoading } = useAuth();
   const location = useLocation();
   const [status, setStatus] = useState<'loading' | 'ok' | 'setup'>('loading');
 
   useEffect(() => {
+    if (authLoading) return;
     if (!isAuthenticated) { setStatus('ok'); return; }
     api.get('/settings').then((res: any) => {
       setStatus(res.data.onboarding_completo ? 'ok' : 'setup');
     }).catch(() => setStatus('ok'));
-  }, [isAuthenticated]);
+  }, [isAuthenticated, authLoading]);
 
-  if (!isAuthenticated) return <Navigate to="/login" state={{ from: location }} replace />;
-
-  if (status === 'loading') {
+  if (authLoading || status === 'loading') {
     return (
       <div className="min-h-screen flex items-center justify-center" style={{ background: 'var(--bg-base)' }}>
         <Spinner size="lg" />
       </div>
     );
   }
+  if (!isAuthenticated) return <Navigate to="/login" state={{ from: location }} replace />;
   if (status === 'setup') return <Navigate to="/setup" state={{ from: location }} replace />;
   return <>{children}</>;
 }

@@ -11,7 +11,7 @@ export function resolveFileUrl(storedPath: string | null | undefined): string | 
   return `${backendBase}/${storedPath.replace(/^\//, '')}`;
 }
 
-const api = axios.create({ baseURL: apiBase });
+const api = axios.create({ baseURL: apiBase, withCredentials: true });
 
 api.interceptors.response.use(
   res => res.data,

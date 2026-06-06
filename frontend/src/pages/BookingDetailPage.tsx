@@ -1,7 +1,6 @@
 import { useEffect, useState, useRef } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import api, { apiBase, resolveFileUrl, backendBase } from '../lib/api';
-import { useAuth } from '../contexts/AuthContext';
 import { useTranslation } from '../contexts/TranslationContext';
 import { useToast } from '../contexts/ToastContext';
 import Button from '../components/ui/Button';
@@ -48,7 +47,6 @@ function paymentBadge(s: string) {
 
 export default function BookingDetailPage() {
   const { id } = useParams<{ id: string }>();
-  const { token: authToken } = useAuth();
   const { t } = useTranslation();
   const { toast } = useToast();
   const navigate = useNavigate();
@@ -93,7 +91,7 @@ export default function BookingDetailPage() {
 
   async function downloadPdf(url: string, filename: string) {
     try {
-      const res = await fetch(url, { headers: { Authorization: `Bearer ${authToken}` } });
+      const res = await fetch(url, { credentials: 'include' });
       if (!res.ok) throw new Error('Erro ao baixar PDF');
       const blob = await res.blob();
       const a = document.createElement('a');

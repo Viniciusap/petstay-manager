@@ -5,9 +5,22 @@ const jwt = require('jsonwebtoken');
 const { v4: uuidv4 } = require('uuid');
 const rateLimit = require('express-rate-limit');
 const { getSetting, updateSettings } = require('../utils/db');
-const { revoke } = require('../utils/tokenRevocation');
+const { revoke, isRevoked } = require('../utils/tokenRevocation');
 
 const SALT_ROUNDS = 12;
+
+function parseExpiry(str) {
+  if (!str) return 7 * 24 * 60 * 60 * 1000;
+  const match = str.match(/^(\d+)([smhd])$/);
+  if (!match) return 7 * 24 * 60 * 60 * 1000;
+  const n = parseInt(match[1]);
+  return n * { s: 1000, m: 60000, h: 3600000, d: 86400000 }[match[2]];
+}
+
+function cookieOpts() {
+  const prod = process.env.NODE_ENV === 'production';
+  return { httpOnly: true, secure: prod, sameSite: prod ? 'none' : 'lax', path: '/' };
+}
 
 function secret() {
   const s = process.env.JWT_SECRET;
@@ -68,15 +81,17 @@ router.post('/login', loginLimiter, async (req, res, next) => {
     const token = jwt.sign({ role: 'admin', jti }, secret(), { expiresIn: expiry });
     const decoded = jwt.decode(token);
 
-    res.json({ success: true, data: { token, expiresAt: new Date(decoded.exp * 1000).toISOString(), firstLogin: isFirstLogin } });
+    res.cookie('petstay_token', token, { ...cookieOpts(), maxAge: parseExpiry(expiry) });
+    res.json({ success: true, data: { expiresAt: new Date(decoded.exp * 1000).toISOString(), firstLogin: isFirstLogin } });
   } catch (err) { next(err); }
 });
 
 router.get('/me', (req, res) => {
-  const header = req.headers.authorization;
-  if (!header?.startsWith('Bearer ')) return res.json({ success: true, data: { authenticated: false } });
+  const token = req.cookies?.petstay_token || req.headers.authorization?.replace(/^Bearer\s+/, '');
+  if (!token) return res.json({ success: true, data: { authenticated: false } });
   try {
-    const payload = jwt.verify(header.slice(7), secret());
+    const payload = jwt.verify(token, secret());
+    if (payload.jti && isRevoked(payload.jti)) return res.json({ success: true, data: { authenticated: false } });
     res.json({ success: true, data: { authenticated: true, expiresAt: new Date(payload.exp * 1000).toISOString() } });
   } catch {
     res.json({ success: true, data: { authenticated: false } });
@@ -84,13 +99,15 @@ router.get('/me', (req, res) => {
 });
 
 router.post('/logout', (req, res) => {
-  const header = req.headers.authorization;
-  if (header?.startsWith('Bearer ')) {
+  const token = req.cookies?.petstay_token || req.headers.authorization?.replace(/^Bearer\s+/, '');
+  if (token) {
     try {
-      const payload = jwt.verify(header.slice(7), secret());
+      const payload = jwt.verify(token, secret());
       if (payload.jti) revoke(payload.jti, payload.exp * 1000);
     } catch {}
   }
+  const prod = process.env.NODE_ENV === 'production';
+  res.clearCookie('petstay_token', { path: '/', sameSite: prod ? 'none' : 'lax', secure: prod });
   res.json({ success: true });
 });
 

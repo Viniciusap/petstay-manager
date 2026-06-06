@@ -2,62 +2,47 @@ import { createContext, useContext, useState, useEffect, ReactNode } from 'react
 import api from '../lib/api';
 
 interface AuthState {
-  token: string | null;
+  isAuthenticated: boolean;
   expiresAt: Date | null;
+  loading: boolean;
 }
 
 interface AuthContextType {
-  token: string | null;
-  expiresAt: Date | null;
   isAuthenticated: boolean;
+  expiresAt: Date | null;
+  loading: boolean;
   login: (senha: string, setup_token?: string) => Promise<{ firstLogin: boolean }>;
   logout: () => void;
-}
-
-const KEY = 'petstay_auth';
-
-function load(): AuthState {
-  try {
-    const raw = localStorage.getItem(KEY);
-    if (!raw) return { token: null, expiresAt: null };
-    const { token, expiresAt } = JSON.parse(raw);
-    const exp = new Date(expiresAt);
-    if (exp <= new Date()) { localStorage.removeItem(KEY); return { token: null, expiresAt: null }; }
-    return { token, expiresAt: exp };
-  } catch { return { token: null, expiresAt: null }; }
 }
 
 const AuthContext = createContext<AuthContextType>(null!);
 
 export function AuthProvider({ children }: { children: ReactNode }) {
-  const [state, setState] = useState<AuthState>(load);
+  const [state, setState] = useState<AuthState>({ isAuthenticated: false, expiresAt: null, loading: true });
 
   useEffect(() => {
-    const id = api.interceptors.request.use(cfg => {
-      if (state.token) cfg.headers['Authorization'] = `Bearer ${state.token}`;
-      return cfg;
-    });
-    return () => api.interceptors.request.eject(id);
-  }, [state.token]);
+    api.get('/auth/me')
+      .then((res: any) => {
+        const { authenticated, expiresAt } = res.data;
+        setState({ isAuthenticated: !!authenticated, expiresAt: authenticated ? new Date(expiresAt) : null, loading: false });
+      })
+      .catch(() => setState({ isAuthenticated: false, expiresAt: null, loading: false }));
+  }, []);
 
   async function login(senha: string, setup_token?: string) {
     const res: any = await api.post('/auth/login', { senha, ...(setup_token ? { setup_token } : {}) });
-    const { token, expiresAt, firstLogin } = res.data;
-    localStorage.setItem(KEY, JSON.stringify({ token, expiresAt }));
-    setState({ token, expiresAt: new Date(expiresAt) });
+    const { expiresAt, firstLogin } = res.data;
+    setState({ isAuthenticated: true, expiresAt: new Date(expiresAt), loading: false });
     return { firstLogin };
   }
 
   function logout() {
-    api.post('/auth/logout').catch(() => {}); // revoke jti server-side (fire-and-forget)
-    localStorage.removeItem(KEY);
-    setState({ token: null, expiresAt: null });
+    setState(s => ({ ...s, isAuthenticated: false, expiresAt: null }));
+    api.post('/auth/logout').catch(() => {});
   }
 
-  const isAuthenticated = !!state.token && !!state.expiresAt && state.expiresAt > new Date();
-
   return (
-    <AuthContext.Provider value={{ token: state.token, expiresAt: state.expiresAt, isAuthenticated, login, logout }}>
+    <AuthContext.Provider value={{ isAuthenticated: state.isAuthenticated, expiresAt: state.expiresAt, loading: state.loading, login, logout }}>
       {children}
     </AuthContext.Provider>
   );

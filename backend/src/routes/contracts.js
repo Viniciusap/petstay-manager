@@ -111,7 +111,7 @@ router.post('/sign/:token', signBodyParser, async (req, res, next) => {
 
     const rawIp = req.ip || req.socket.remoteAddress || '';
     const timestamp = new Date().toISOString();
-    const hash = generateHash(contract.token_unico, nome_digitado.trim(), timestamp, rawIp);
+    const hash = generateHash(contract.token_unico, nome_digitado.trim(), timestamp);
 
     await updateOne('contracts', contract.id, {
       status: 'assinado',
