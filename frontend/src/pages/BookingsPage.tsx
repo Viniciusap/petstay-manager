@@ -1,4 +1,5 @@
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
+import { useQuery } from '@tanstack/react-query';
 import { useNavigate } from 'react-router-dom';
 import api from '../lib/api';
 import { useTranslation } from '../contexts/TranslationContext';
@@ -27,31 +28,28 @@ function paymentBadge(s: string) {
   return <Badge variant="pending">Pendente</Badge>;
 }
 
-export default function BookingsPage() {
+const STATUS_OPTIONS = [
+  { value: '', label: 'Todos' },
+  { value: 'agendado', label: 'Agendado' },
+  { value: 'check-in', label: 'Check-in' },
+  { value: 'check-out', label: 'Check-out' },
+  { value: 'cancelado', label: 'Cancelado' },
+];
+
+export function BookingsPage() {
   const { t } = useTranslation();
   const navigate = useNavigate();
-  const [bookings, setBookings] = useState<Booking[]>([]);
-  const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState('');
 
-  function load() {
-    setLoading(true);
-    const params = new URLSearchParams();
-    if (search) params.set('q', search);
-    if (statusFilter) params.set('status', statusFilter);
-    api.get(`/bookings?${params}`).then((r: any) => setBookings(r.data)).finally(() => setLoading(false));
-  }
+  const params = new URLSearchParams();
+  if (search) params.set('q', search);
+  if (statusFilter) params.set('status', statusFilter);
 
-  useEffect(() => { load(); }, [search, statusFilter]);
-
-  const statusOptions = [
-    { value: '', label: 'Todos' },
-    { value: 'agendado', label: 'Agendado' },
-    { value: 'check-in', label: 'Check-in' },
-    { value: 'check-out', label: 'Check-out' },
-    { value: 'cancelado', label: 'Cancelado' },
-  ];
+  const { data: bookings = [], isLoading } = useQuery({
+    queryKey: ['bookings', search, statusFilter],
+    queryFn: () => api.get<Booking[]>(`/bookings?${params}`).then(r => r.data ?? []),
+  });
 
   return (
     <div className="flex flex-col gap-5">
@@ -65,11 +63,11 @@ export default function BookingsPage() {
           <Input placeholder={t('common.search')} value={search} onChange={e => setSearch(e.target.value)} />
         </div>
         <div className="w-44">
-          <Select options={statusOptions} value={statusFilter} onChange={e => setStatusFilter(e.target.value)} />
+          <Select options={STATUS_OPTIONS} value={statusFilter} onChange={e => setStatusFilter(e.target.value)} />
         </div>
       </div>
 
-      {loading
+      {isLoading
         ? <div className="flex justify-center py-16"><Spinner size="lg" /></div>
         : bookings.length === 0
           ? <EmptyState emoji="📋" title={t('booking.noBookings')} action={{ label: t('booking.new'), onClick: () => navigate('/bookings/new') }} />
@@ -82,13 +80,13 @@ export default function BookingsPage() {
                   style={{ borderColor: 'var(--border)', background: 'var(--bg-card)' }}
                   onClick={() => navigate(`/bookings/${b.id}`)}
                 >
-                  <Avatar species={(b as any).animal?.especie} size="sm" />
+                  <Avatar species={b.animal?.especie} size="sm" />
                   <div className="flex-1 min-w-0">
                     <p className="font-semibold text-sm truncate" style={{ color: 'var(--text-primary)' }}>
-                      {(b as any).animal?.nome || '—'}
+                      {b.animal?.nome || '—'}
                     </p>
                     <p className="text-xs truncate" style={{ color: 'var(--text-secondary)' }}>
-                      {(b as any).tutor?.nome || '—'} · {fmtDate(b.data_entrada)} → {fmtDate(b.data_saida)}
+                      {b.tutor?.nome || '—'} · {fmtDate(b.data_entrada)} → {fmtDate(b.data_saida)}
                     </p>
                   </div>
                   <div className="hidden sm:flex flex-col items-end gap-1">

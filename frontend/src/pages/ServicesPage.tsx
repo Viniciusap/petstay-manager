@@ -1,7 +1,11 @@
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { useForm } from 'react-hook-form';
+import { zodResolver } from '@hookform/resolvers/zod';
+import { z } from 'zod';
+import { toast } from 'sonner';
 import api from '../lib/api';
 import { useTranslation } from '../contexts/TranslationContext';
-import { useToast } from '../contexts/ToastContext';
 import Button from '../components/ui/Button';
 import Input from '../components/ui/Input';
 import Modal from '../components/ui/Modal';
@@ -12,52 +16,62 @@ import type { Service } from '../types';
 
 function fmtBRL(v: number) { return `R$ ${v.toFixed(2).replace('.', ',')}`; }
 
-export default function ServicesPage() {
+const serviceSchema = z.object({
+  nome: z.string().min(1, 'Nome obrigatório'),
+  nome_en: z.string().optional(),
+  valor: z.coerce.number().min(0, 'Valor inválido'),
+});
+type ServiceFields = z.infer<typeof serviceSchema>;
+
+export function ServicesPage() {
   const { t } = useTranslation();
-  const { toast } = useToast();
-  const [services, setServices] = useState<Service[]>([]);
-  const [loading, setLoading] = useState(true);
+  const queryClient = useQueryClient();
   const [modal, setModal] = useState(false);
   const [editTarget, setEditTarget] = useState<Service | null>(null);
-  const [saving, setSaving] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState<Service | null>(null);
-  const [deleting, setDeleting] = useState(false);
-  const [form, setForm] = useState({ nome: '', nome_en: '', valor: '' });
 
-  function load() {
-    setLoading(true);
-    api.get('/services').then((r: any) => setServices(r.data)).finally(() => setLoading(false));
-  }
+  const { data: services = [], isLoading } = useQuery({
+    queryKey: ['services'],
+    queryFn: () => api.get<Service[]>('/services').then(r => r.data ?? []),
+  });
 
-  useEffect(() => { load(); }, []);
+  const { register, handleSubmit, reset, formState: { errors } } = useForm<ServiceFields>({
+    resolver: zodResolver(serviceSchema),
+  });
 
-  function openNew() { setForm({ nome: '', nome_en: '', valor: '' }); setEditTarget(null); setModal(true); }
-  function openEdit(s: Service) { setForm({ nome: s.nome, nome_en: s.nome_en, valor: String(s.valor) }); setEditTarget(s); setModal(true); }
-
-  async function save() {
-    if (!form.nome || !form.valor) return;
-    setSaving(true);
-    try {
-      const body = { nome: form.nome, nome_en: form.nome_en || form.nome, valor: parseFloat(form.valor) };
-      if (editTarget) await api.put(`/services/${editTarget.id}`, body);
-      else await api.post('/services', body);
-      toast(editTarget ? 'Atualizado!' : 'Criado!');
+  const { mutate: saveService, isPending: saving } = useMutation({
+    mutationFn: (d: ServiceFields) => {
+      const body = { nome: d.nome, nome_en: d.nome_en || d.nome, valor: d.valor };
+      return editTarget ? api.put(`/services/${editTarget.id}`, body) : api.post('/services', body);
+    },
+    onSuccess: () => {
+      toast.success(editTarget ? 'Atualizado!' : 'Criado!');
       setModal(false);
-      load();
-    } catch { toast('Erro', 'error'); }
-    finally { setSaving(false); }
+      queryClient.invalidateQueries({ queryKey: ['services'] });
+    },
+    onError: () => toast.error('Erro'),
+  });
+
+  const { mutate: deleteService, isPending: deleting } = useMutation({
+    mutationFn: () => api.delete(`/services/${deleteTarget?.id}`),
+    onSuccess: () => {
+      toast.success('Removido!');
+      setDeleteTarget(null);
+      queryClient.invalidateQueries({ queryKey: ['services'] });
+    },
+    onError: () => toast.error('Erro'),
+  });
+
+  function openNew() {
+    reset({ nome: '', nome_en: '', valor: 0 });
+    setEditTarget(null);
+    setModal(true);
   }
 
-  async function del() {
-    if (!deleteTarget) return;
-    setDeleting(true);
-    try {
-      await api.delete(`/services/${deleteTarget.id}`);
-      toast('Removido!');
-      setDeleteTarget(null);
-      load();
-    } catch { toast('Erro', 'error'); }
-    finally { setDeleting(false); }
+  function openEdit(s: Service) {
+    reset({ nome: s.nome, nome_en: s.nome_en, valor: s.valor });
+    setEditTarget(s);
+    setModal(true);
   }
 
   return (
@@ -67,7 +81,7 @@ export default function ServicesPage() {
         <Button onClick={openNew}>{t('service.new')}</Button>
       </div>
 
-      {loading
+      {isLoading
         ? <div className="flex justify-center py-16"><Spinner size="lg" /></div>
         : services.length === 0
           ? <EmptyState emoji="✂️" title={t('service.noServices')} action={{ label: t('service.new'), onClick: openNew }} />
@@ -97,14 +111,14 @@ export default function ServicesPage() {
         footer={
           <>
             <Button variant="ghost" onClick={() => setModal(false)}>{t('common.cancel')}</Button>
-            <Button loading={saving} onClick={save}>{t('common.save')}</Button>
+            <Button loading={saving} onClick={handleSubmit(d => saveService(d))}>{t('common.save')}</Button>
           </>
         }
       >
         <div className="flex flex-col gap-4">
-          <Input label={t('service.fields.name')} value={form.nome} onChange={e => setForm(f => ({ ...f, nome: e.target.value }))} />
-          <Input label={t('service.fields.name_en')} value={form.nome_en} onChange={e => setForm(f => ({ ...f, nome_en: e.target.value }))} />
-          <Input label={t('service.fields.price')} type="number" min="0" step="0.01" value={form.valor} onChange={e => setForm(f => ({ ...f, valor: e.target.value }))} />
+          <Input label={t('service.fields.name')} error={errors.nome?.message} {...register('nome')} />
+          <Input label={t('service.fields.name_en')} {...register('nome_en')} />
+          <Input label={t('service.fields.price')} type="number" min="0" step="0.01" error={errors.valor?.message} {...register('valor')} />
         </div>
       </Modal>
 
@@ -113,7 +127,7 @@ export default function ServicesPage() {
         title="Remover serviço"
         message={`Remover "${deleteTarget?.nome}"?`}
         loading={deleting}
-        onConfirm={del}
+        onConfirm={() => deleteService()}
         onCancel={() => setDeleteTarget(null)}
       />
     </div>

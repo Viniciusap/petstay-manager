@@ -113,9 +113,8 @@ export interface BlockedDate {
 }
 
 export interface ApiResponse<T> {
-  success: boolean;
-  data: T;
-  total?: number;
+  data?: T;
   error?: string;
   code?: string;
+  meta?: { total?: number };
 }

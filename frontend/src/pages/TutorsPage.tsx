@@ -1,8 +1,12 @@
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { useForm, Controller } from 'react-hook-form';
+import { zodResolver } from '@hookform/resolvers/zod';
+import { z } from 'zod';
 import { useNavigate } from 'react-router-dom';
+import { toast } from 'sonner';
 import api from '../lib/api';
 import { useTranslation } from '../contexts/TranslationContext';
-import { useToast } from '../contexts/ToastContext';
 import Button from '../components/ui/Button';
 import Input from '../components/ui/Input';
 import PhoneInput from '../components/ui/PhoneInput';
@@ -12,47 +16,44 @@ import Spinner from '../components/ui/Spinner';
 import { isValidEmail, isValidPhone } from '../lib/masks';
 import type { Tutor } from '../types';
 
-export default function TutorsPage() {
+const tutorSchema = z.object({
+  nome: z.string().min(1, 'Nome obrigatório'),
+  telefone: z.string().min(1, 'Telefone obrigatório').refine(isValidPhone, 'Telefone inválido'),
+  email: z.string().optional().refine(v => !v || isValidEmail(v), 'E-mail inválido'),
+  endereco: z.string().optional(),
+});
+type TutorFields = z.infer<typeof tutorSchema>;
+
+export function TutorsPage() {
   const { t } = useTranslation();
-  const { toast } = useToast();
   const navigate = useNavigate();
-  const [tutors, setTutors] = useState<Tutor[]>([]);
-  const [loading, setLoading] = useState(true);
+  const queryClient = useQueryClient();
   const [search, setSearch] = useState('');
   const [modal, setModal] = useState(false);
-  const [saving, setSaving] = useState(false);
-  const [form, setForm] = useState({ nome: '', telefone: '', email: '', endereco: '' });
-  const [errors, setErrors] = useState<Record<string, string>>({});
 
-  function load() {
-    setLoading(true);
-    const q = search ? `?q=${search}` : '';
-    api.get(`/tutors${q}`).then((r: any) => setTutors(r.data)).finally(() => setLoading(false));
-  }
+  const { data: tutors = [], isLoading } = useQuery({
+    queryKey: ['tutors', search],
+    queryFn: () => api.get<Tutor[]>(`/tutors${search ? `?q=${search}` : ''}`).then(r => r.data ?? []),
+  });
 
-  useEffect(() => { load(); }, [search]);
+  const { register, handleSubmit, reset, control, formState: { errors } } = useForm<TutorFields>({
+    resolver: zodResolver(tutorSchema),
+  });
+
+  const { mutate: saveTutor, isPending: saving } = useMutation({
+    mutationFn: (d: TutorFields) => api.post('/tutors', d),
+    onSuccess: () => {
+      toast.success('Tutor cadastrado!');
+      setModal(false);
+      reset();
+      queryClient.invalidateQueries({ queryKey: ['tutors'] });
+    },
+    onError: () => toast.error('Erro ao cadastrar'),
+  });
 
   function openModal() {
-    setForm({ nome: '', telefone: '', email: '', endereco: '' });
-    setErrors({});
+    reset({ nome: '', telefone: '', email: '', endereco: '' });
     setModal(true);
-  }
-
-  async function save() {
-    const e: Record<string, string> = {};
-    if (!form.nome.trim()) e.nome = t('errors.required');
-    if (!form.telefone) e.telefone = t('errors.required');
-    else if (!isValidPhone(form.telefone)) e.telefone = 'Telefone inválido';
-    if (form.email && !isValidEmail(form.email)) e.email = 'E-mail inválido';
-    if (Object.keys(e).length) { setErrors(e); return; }
-    setSaving(true);
-    try {
-      await api.post('/tutors', form);
-      toast('Tutor cadastrado!');
-      setModal(false);
-      load();
-    } catch { toast('Erro ao cadastrar', 'error'); }
-    finally { setSaving(false); }
   }
 
   return (
@@ -64,7 +65,7 @@ export default function TutorsPage() {
 
       <Input placeholder={t('common.search')} value={search} onChange={e => setSearch(e.target.value)} />
 
-      {loading
+      {isLoading
         ? <div className="flex justify-center py-16"><Spinner size="lg" /></div>
         : tutors.length === 0
           ? <EmptyState emoji="👥" title={t('tutor.noTutors')} action={{ label: t('tutor.new'), onClick: openModal }} />
@@ -98,37 +99,21 @@ export default function TutorsPage() {
         footer={
           <>
             <Button variant="ghost" onClick={() => setModal(false)}>{t('common.cancel')}</Button>
-            <Button loading={saving} onClick={save}>{t('common.save')}</Button>
+            <Button loading={saving} onClick={handleSubmit(d => saveTutor(d))}>{t('common.save')}</Button>
           </>
         }
       >
         <div className="flex flex-col gap-4">
-          <Input
-            label={t('tutor.fields.name')}
-            value={form.nome}
-            onChange={e => { setForm(f => ({ ...f, nome: e.target.value })); setErrors(e2 => ({ ...e2, nome: '' })); }}
-            error={errors.nome}
+          <Input label={t('tutor.fields.name')} error={errors.nome?.message} {...register('nome')} />
+          <Controller
+            name="telefone"
+            control={control}
+            render={({ field }) => (
+              <PhoneInput label={t('tutor.fields.phone')} value={field.value} onChange={field.onChange} error={errors.telefone?.message} />
+            )}
           />
-          <PhoneInput
-            label={t('tutor.fields.phone')}
-            value={form.telefone}
-            onChange={v => { setForm(f => ({ ...f, telefone: v })); setErrors(e => ({ ...e, telefone: '' })); }}
-            error={errors.telefone}
-          />
-          <Input
-            label={t('tutor.fields.email')}
-            type="email"
-            inputMode="email"
-            placeholder="nome@email.com"
-            value={form.email}
-            onChange={e => { setForm(f => ({ ...f, email: e.target.value })); setErrors(er => ({ ...er, email: '' })); }}
-            error={errors.email}
-          />
-          <Input
-            label={t('tutor.fields.address')}
-            value={form.endereco}
-            onChange={e => setForm(f => ({ ...f, endereco: e.target.value }))}
-          />
+          <Input label={t('tutor.fields.email')} type="email" inputMode="email" placeholder="nome@email.com" error={errors.email?.message} {...register('email')} />
+          <Input label={t('tutor.fields.address')} {...register('endereco')} />
         </div>
       </Modal>
     </div>

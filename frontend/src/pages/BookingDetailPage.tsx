@@ -1,8 +1,9 @@
-import { useEffect, useState, useRef } from 'react';
+import { useRef, useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import api, { apiBase, resolveFileUrl, backendBase } from '../lib/api';
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { toast } from 'sonner';
+import api, { apiBase, resolveFileUrl } from '../lib/api';
 import { useTranslation } from '../contexts/TranslationContext';
-import { useToast } from '../contexts/ToastContext';
 import Button from '../components/ui/Button';
 import Badge from '../components/ui/Badge';
 import Card from '../components/ui/Card';
@@ -11,9 +12,7 @@ import Spinner from '../components/ui/Spinner';
 import Avatar from '../components/ui/Avatar';
 import type { Booking, Contract, Settings, Animal, Tutor } from '../types';
 
-// The GET /bookings/:id endpoint embeds animal, tutor, and contract
-interface GaleriaItem { path: string; uploaded_at: string; }
-
+interface GaleriaItem { path: string; uploaded_at: string }
 interface BookingDetail extends Omit<Booking, 'animal' | 'tutor' | 'contract'> {
   animal: Animal | null;
   tutor: Tutor | null;
@@ -45,49 +44,100 @@ function paymentBadge(s: string) {
   return <Badge variant="pending">Pendente</Badge>;
 }
 
-export default function BookingDetailPage() {
+function Row({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="flex justify-between text-sm">
+      <span style={{ color: 'var(--text-secondary)' }}>{label}</span>
+      <span style={{ color: 'var(--text-primary)' }}>{value}</span>
+    </div>
+  );
+}
+
+export function BookingDetailPage() {
   const { id } = useParams<{ id: string }>();
   const { t } = useTranslation();
-  const { toast } = useToast();
   const navigate = useNavigate();
-
-  const [booking, setBooking] = useState<BookingDetail | null>(null);
-  const [settings, setSettings] = useState<Settings | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [confirm, setConfirm] = useState<null | { action: string; label: string; msg: string }>(null);
-  const [acting, setActing] = useState(false);
-  const [regenerating, setRegenerating] = useState(false);
-  const [uploadingPhotos, setUploadingPhotos] = useState(false);
+  const queryClient = useQueryClient();
   const photoInputRef = useRef<HTMLInputElement>(null);
+  const [confirm, setConfirm] = useState<null | { action: string; label: string; msg: string }>(null);
 
-  function load() {
-    return Promise.all([
-      api.get(`/bookings/${id}`),
-      api.get('/settings'),
-    ]).then(([bRes, sRes]: any[]) => {
-      setBooking(bRes.data);
-      setSettings(sRes.data);
-    }).finally(() => setLoading(false));
-  }
+  const { data, isLoading } = useQuery({
+    queryKey: ['booking', id],
+    queryFn: async () => {
+      const [bRes, sRes] = await Promise.all([
+        api.get<BookingDetail>(`/bookings/${id}`),
+        api.get<Settings>('/settings'),
+      ]);
+      return { booking: bRes.data ?? null, settings: sRes.data ?? null };
+    },
+    staleTime: 0,
+  });
 
-  useEffect(() => { load(); }, [id]);
+  const booking = data?.booking ?? null;
+  const settings = data?.settings ?? null;
 
-  async function doAction(action: string) {
-    setActing(true);
-    try {
-      if (action === 'checkin') await api.put(`/bookings/${id}/checkin`, {});
-      else if (action === 'checkout') await api.put(`/bookings/${id}/checkout`, {});
-      else if (action === 'pago') await api.put(`/bookings/${id}/pagamento`, { status_pagamento: 'pago' });
-      else if (action === 'cancel') await api.delete(`/bookings/${id}`);
-      toast('Atualizado com sucesso!');
-      await load();
-    } catch {
-      toast('Erro ao realizar ação', 'error');
-    } finally {
-      setActing(false);
-      setConfirm(null);
-    }
-  }
+  const { mutate: doAction, isPending: acting } = useMutation({
+    mutationFn: async (action: string) => {
+      if (action === 'checkin') return api.put(`/bookings/${id}/checkin`, {});
+      if (action === 'checkout') return api.put(`/bookings/${id}/checkout`, {});
+      if (action === 'pago') return api.put(`/bookings/${id}/pagamento`, { status_pagamento: 'pago' });
+      if (action === 'cancel') return api.delete(`/bookings/${id}`);
+      throw new Error(`Unknown action: ${action}`);
+    },
+    onSuccess: () => {
+      toast.success('Atualizado com sucesso!');
+      queryClient.invalidateQueries({ queryKey: ['booking', id] });
+    },
+    onError: () => toast.error('Erro ao realizar ação'),
+    onSettled: () => setConfirm(null),
+  });
+
+  const { mutate: doRegenerate, isPending: regenerating } = useMutation({
+    mutationFn: () => api.post(`/contracts/${booking?.contract?.id}/resend`, {}),
+    onSuccess: () => {
+      toast.success('Link regenerado!');
+      queryClient.invalidateQueries({ queryKey: ['booking', id] });
+    },
+    onError: () => toast.error('Erro ao regenerar link'),
+  });
+
+  const { mutate: doUploadPhotos, isPending: uploadingPhotos } = useMutation({
+    mutationFn: (files: FileList) => {
+      const form = new FormData();
+      Array.from(files).forEach(f => form.append('photos', f));
+      return api.post(`/bookings/${id}/galeria`, form);
+    },
+    onSuccess: () => {
+      toast.success('Fotos enviadas!');
+      queryClient.invalidateQueries({ queryKey: ['booking', id] });
+    },
+    onError: () => toast.error('Erro ao enviar fotos'),
+  });
+
+  const { mutate: doRemovePhoto } = useMutation({
+    mutationFn: (index: number) => api.delete(`/bookings/${id}/galeria/${index}`),
+    onSuccess: () => {
+      toast.success('Foto removida');
+      queryClient.invalidateQueries({ queryKey: ['booking', id] });
+    },
+    onError: () => toast.error('Erro ao remover foto'),
+  });
+
+  const { mutate: doIncluirFotoPerfil } = useMutation({
+    mutationFn: async () => {
+      const fotoPath = (booking?.animal as any)?.foto_path;
+      const resp = await fetch(resolveFileUrl(fotoPath) ?? '');
+      const blob = await resp.blob();
+      const fd = new FormData();
+      fd.append('photos', blob, 'foto_perfil.jpg');
+      return api.post(`/bookings/${id}/galeria`, fd);
+    },
+    onSuccess: () => {
+      toast.success('Foto de perfil incluída na galeria!');
+      queryClient.invalidateQueries({ queryKey: ['booking', id] });
+    },
+    onError: () => toast.error('Erro ao incluir foto'),
+  });
 
   async function downloadPdf(url: string, filename: string) {
     try {
@@ -99,55 +149,20 @@ export default function BookingDetailPage() {
       a.download = filename;
       a.click();
       URL.revokeObjectURL(a.href);
-    } catch { toast('Erro ao baixar PDF', 'error'); }
-  }
-
-  async function uploadPhotos(files: FileList) {
-    if (!files.length) return;
-    setUploadingPhotos(true);
-    try {
-      const form = new FormData();
-      Array.from(files).forEach(f => form.append('photos', f));
-      await api.post(`/bookings/${id}/galeria`, form);
-      toast('Fotos enviadas!');
-      await load();
-    } catch { toast('Erro ao enviar fotos', 'error'); }
-    finally { setUploadingPhotos(false); }
-  }
-
-  async function removePhoto(index: number) {
-    try {
-      await api.delete(`/bookings/${id}/galeria/${index}`);
-      toast('Foto removida');
-      await load();
-    } catch { toast('Erro ao remover foto', 'error'); }
+    } catch { toast.error('Erro ao baixar PDF'); }
   }
 
   function copyGaleriaLink() {
     if (!booking?.galeria_token) return;
     const url = `${window.location.origin}/galeria?t=${booking.galeria_token}`;
-    navigator.clipboard.writeText(url).then(() => toast('Link da galeria copiado!'));
-  }
-
-  async function regenerateToken() {
-    if (!booking?.contract) return;
-    setRegenerating(true);
-    try {
-      await api.post(`/contracts/${booking.contract.id}/resend`, {});
-      toast('Link regenerado!');
-      await load();
-    } catch {
-      toast('Erro ao regenerar link', 'error');
-    } finally {
-      setRegenerating(false);
-    }
+    navigator.clipboard.writeText(url).then(() => toast.success('Link da galeria copiado!'));
   }
 
   function copyLink() {
     const contract = booking?.contract;
     if (!contract) return;
     const url = `${settings?.base_url}/assinar?t=${contract.token_unico}`;
-    navigator.clipboard.writeText(url).then(() => toast(t('common.linkCopied')));
+    navigator.clipboard.writeText(url).then(() => toast.success(t('common.linkCopied')));
   }
 
   function whatsappLink() {
@@ -160,7 +175,7 @@ export default function BookingDetailPage() {
     return `https://wa.me/${booking.tutor?.telefone?.replace(/\D/g, '')}?text=${text}`;
   }
 
-  if (loading) return <div className="flex justify-center py-20"><Spinner size="lg" /></div>;
+  if (isLoading) return <div className="flex justify-center py-20"><Spinner size="lg" /></div>;
   if (!booking) return <p style={{ color: 'var(--text-muted)' }}>Reserva não encontrada.</p>;
 
   const contract = booking.contract;
@@ -222,7 +237,7 @@ export default function BookingDetailPage() {
                   <Button size="sm" variant="secondary">📱 {t('common.sendWhatsapp')}</Button>
                 </a>
                 {contract.status !== 'assinado' && (
-                  <Button size="sm" variant="ghost" loading={regenerating} onClick={regenerateToken}>
+                  <Button size="sm" variant="ghost" loading={regenerating} onClick={() => doRegenerate()}>
                     {t('contract.regenerate')}
                   </Button>
                 )}
@@ -264,7 +279,7 @@ export default function BookingDetailPage() {
                 <div key={i} className="relative group aspect-square rounded-xl overflow-hidden" style={{ border: '1px solid var(--border)' }}>
                   <img src={url ?? ''} alt={`Foto ${i + 1}`} className="w-full h-full object-cover" />
                   <button
-                    onClick={() => removePhoto(i)}
+                    onClick={() => doRemovePhoto(i)}
                     className="absolute top-1 right-1 w-6 h-6 rounded-full flex items-center justify-center text-white text-xs opacity-0 group-hover:opacity-100 transition-opacity"
                     style={{ background: 'rgba(0,0,0,0.6)' }}
                   >✕</button>
@@ -282,24 +297,14 @@ export default function BookingDetailPage() {
           accept="image/*"
           multiple
           className="hidden"
-          onChange={e => e.target.files && uploadPhotos(e.target.files)}
+          onChange={e => e.target.files && doUploadPhotos(e.target.files)}
         />
         <div className="flex flex-wrap gap-2">
           <Button size="sm" variant="secondary" loading={uploadingPhotos} onClick={() => photoInputRef.current?.click()}>
             📷 {uploadingPhotos ? 'Enviando...' : 'Adicionar fotos'}
           </Button>
           {(booking.animal as any)?.foto_path && (
-            <Button size="sm" variant="ghost" onClick={async () => {
-              try {
-                const fd = new FormData();
-                const resp = await fetch(resolveFileUrl((booking.animal as any).foto_path) ?? '');
-                const blob = await resp.blob();
-                fd.append('photos', blob, 'foto_perfil.jpg');
-                await api.post(`/bookings/${id}/galeria`, fd);
-                toast('Foto de perfil incluída na galeria!');
-                await load();
-              } catch { toast('Erro ao incluir foto', 'error'); }
-            }}>
+            <Button size="sm" variant="ghost" onClick={() => doIncluirFotoPerfil()}>
               🐾 Incluir foto de perfil
             </Button>
           )}
@@ -331,16 +336,6 @@ export default function BookingDetailPage() {
         onConfirm={() => confirm && doAction(confirm.action)}
         onCancel={() => setConfirm(null)}
       />
-
-    </div>
-  );
-}
-
-function Row({ label, value }: { label: string; value: string }) {
-  return (
-    <div className="flex justify-between text-sm">
-      <span style={{ color: 'var(--text-secondary)' }}>{label}</span>
-      <span style={{ color: 'var(--text-primary)' }}>{value}</span>
     </div>
   );
 }

@@ -2,25 +2,25 @@ import { BrowserRouter, Routes, Route, Navigate, useLocation } from 'react-route
 import { useEffect, useState } from 'react';
 import { ThemeProvider } from './contexts/ThemeContext';
 import { TranslationProvider } from './contexts/TranslationContext';
-import { ToastProvider } from './contexts/ToastContext';
 import { AuthProvider, useAuth } from './contexts/AuthContext';
 import AppShell from './components/layout/AppShell';
 import Spinner from './components/ui/Spinner';
+import { ErrorBoundary } from './components/ui/ErrorBoundary';
 import api from './lib/api';
 
-import LoginPage from './pages/LoginPage';
-import OnboardingPage from './pages/OnboardingPage';
-import DashboardPage from './pages/DashboardPage';
-import BookingsPage from './pages/BookingsPage';
-import BookingFormPage from './pages/BookingFormPage';
-import BookingDetailPage from './pages/BookingDetailPage';
-import AnimalsPage from './pages/AnimalsPage';
-import AnimalDetailPage from './pages/AnimalDetailPage';
-import TutorsPage from './pages/TutorsPage';
-import TutorDetailPage from './pages/TutorDetailPage';
-import ServicesPage from './pages/ServicesPage';
-import CalendarPage from './pages/CalendarPage';
-import SettingsPage from './pages/SettingsPage';
+import { LoginPage } from './pages/LoginPage';
+import { OnboardingPage } from './pages/OnboardingPage';
+import { DashboardPage } from './pages/DashboardPage';
+import { BookingsPage } from './pages/BookingsPage';
+import { BookingFormPage } from './pages/BookingFormPage';
+import { BookingDetailPage } from './pages/BookingDetailPage';
+import { AnimalsPage } from './pages/AnimalsPage';
+import { AnimalDetailPage } from './pages/AnimalDetailPage';
+import { TutorsPage } from './pages/TutorsPage';
+import { TutorDetailPage } from './pages/TutorDetailPage';
+import { ServicesPage } from './pages/ServicesPage';
+import { CalendarPage } from './pages/CalendarPage';
+import { SettingsPage } from './pages/SettingsPage';
 import SigningPage from './pages/SigningPage';
 import VerifyPage from './pages/VerifyPage';
 import GaleriaPage from './pages/GaleriaPage';
@@ -54,7 +54,6 @@ export default function App() {
   return (
     <ThemeProvider>
       <TranslationProvider>
-        <ToastProvider>
           <AuthProvider>
             <BrowserRouter>
               <Routes>
@@ -66,7 +65,7 @@ export default function App() {
                 <Route path="/galeria" element={<GaleriaPage />} />
 
                 {/* Admin routes */}
-                <Route element={<RequireAuth><AppShell /></RequireAuth>}>
+                <Route element={<ErrorBoundary><RequireAuth><AppShell /></RequireAuth></ErrorBoundary>}>
                   <Route path="/" element={<DashboardPage />} />
                   <Route path="/bookings" element={<BookingsPage />} />
                   <Route path="/bookings/new" element={<BookingFormPage />} />
@@ -84,7 +83,6 @@ export default function App() {
               </Routes>
             </BrowserRouter>
           </AuthProvider>
-        </ToastProvider>
       </TranslationProvider>
     </ThemeProvider>
   );
