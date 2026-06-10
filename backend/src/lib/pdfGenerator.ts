@@ -1,7 +1,7 @@
 import PDFDocument from 'pdfkit';
 import QRCode from 'qrcode';
 import { eq } from 'drizzle-orm';
-import { db } from '../db/index.js';
+import type { DB } from '../db/index.js';
 import { contracts, bookings, animals, tutors, appSettings } from '../db/schema.js';
 import { readFile, saveFile } from './storage.js';
 
@@ -37,7 +37,7 @@ function sectionTitle(doc: PDFKit.PDFDocument, text: string, x: number, y: numbe
     .text(text, x + 7, y, { width: W - x - 40 });
 }
 
-export async function generateContractPdf(contractId: string, tipo: 'rascunho' | 'final' = 'final'): Promise<string> {
+export async function generateContractPdf(db: DB, contractId: string, tipo: 'rascunho' | 'final' = 'final'): Promise<string> {
   const [contract] = await db.select().from(contracts).where(eq(contracts.id, contractId));
   if (!contract) throw new Error(`Contract ${contractId} not found`);
 

@@ -4,8 +4,9 @@ import cors from '@fastify/cors';
 import helmet from '@fastify/helmet';
 import cookie from '@fastify/cookie';
 import multipart from '@fastify/multipart';
-import staticFiles from '@fastify/static';
 import path from 'node:path';
+import { createReadStream } from 'node:fs';
+import { access } from 'node:fs/promises';
 import { errorsPlugin } from './plugins/errors.js';
 import { authPlugin } from './plugins/auth.js';
 import { rateLimitPlugin } from './plugins/rateLimits.js';
@@ -19,8 +20,15 @@ import { datesRoutes } from './routes/dates.js';
 import { galeriaRoutes } from './routes/galeria.js';
 import { settingsRoutes } from './routes/settings.js';
 import { mfaRoutes } from './routes/mfa.js';
+import { systemRoutes } from './routes/system.js';
+import { getDb, isValidSlug, ensureSystemReady } from './db/index.js';
 
-const APP_VERSION = '2.0.0';
+const APP_VERSION = '3.0.0';
+
+const MIME: Record<string, string> = {
+  '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg',
+  '.webp': 'image/webp', '.gif': 'image/gif', '.pdf': 'application/pdf',
+};
 
 function requiredEnv(key: string): string {
   const val = process.env[key];
@@ -30,6 +38,9 @@ function requiredEnv(key: string): string {
 
 export async function buildServer() {
   requiredEnv('POSTGRES_URL');
+  requiredEnv('SYSTEM_ADMIN_PASSWORD');
+
+  await ensureSystemReady();
 
   const app = Fastify({ logger: true, trustProxy: true });
 
@@ -62,40 +73,78 @@ export async function buildServer() {
   });
 
   await app.register(cookie);
-
   await app.register(multipart, { limits: { fileSize: 5 * 1024 * 1024 } });
-
-  const dataDir = process.env['DATA_DIR'];
-  if (dataDir) {
-    const uploadsDir = path.resolve(dataDir, 'uploads');
-    const { promises: fs } = await import('node:fs');
-    await fs.mkdir(uploadsDir, { recursive: true });
-    await app.register(staticFiles, {
-      root: uploadsDir,
-      prefix: '/uploads/',
-    });
-  }
-
   await app.register(errorsPlugin);
   await app.register(rateLimitPlugin);
   await app.register(authPlugin);
 
+  // ── Tenant resolution by path ──────────────────────────────────────────────
+  // Skipped for: /health, /system (system-admin area)
+  app.addHook('preHandler', async (req, reply) => {
+    if (req.url === '/health' || req.url.startsWith('/system')) return;
+
+    const slug = req.url.split('/').filter(Boolean)[0] ?? '';
+    if (!slug || !isValidSlug(slug)) {
+      return reply.status(400).send({ error: 'Tenant inválido ou não informado', code: 'INVALID_TENANT' });
+    }
+
+    try {
+      req.tenantSlug = slug;
+      req.db = await getDb(slug);
+    } catch (err: any) {
+      return reply.status(err.statusCode ?? 500).send({ error: err.message, code: 'TENANT_ERROR' });
+    }
+  });
+
+  // ── Tenant-aware uploads ───────────────────────────────────────────────────
+  const dataDir = process.env['DATA_DIR'];
+  if (dataDir) {
+    app.get('/:slug/uploads/*', async (req, reply) => {
+      const { slug } = req.params as { slug: string };
+      const subPath = ((req.params as any)['*'] as string).replace(/\.\./g, '').replace(/^\/+/, '');
+      if (!subPath) return reply.status(404).send();
+
+      const fullPath = path.resolve(dataDir, slug, 'uploads', subPath);
+      const base = path.resolve(dataDir, slug, 'uploads');
+      if (!fullPath.startsWith(base + path.sep)) return reply.status(400).send({ error: 'Invalid path' });
+
+      try {
+        await access(fullPath);
+      } catch {
+        return reply.status(404).send();
+      }
+
+      const ext = path.extname(fullPath).toLowerCase();
+      reply.header('Content-Type', MIME[ext] ?? 'application/octet-stream');
+      reply.header('Cache-Control', 'public, max-age=86400');
+      return reply.send(createReadStream(fullPath));
+    });
+  }
+
+  // ── Health ─────────────────────────────────────────────────────────────────
   app.get('/health', async () => ({
     status: 'ok',
     version: APP_VERSION,
     uptime: Math.floor(process.uptime()),
   }));
 
-  await app.register(authRoutes);
-  await app.register(tutorsRoutes);
-  await app.register(animalsRoutes);
-  await app.register(bookingsRoutes);
-  await app.register(contractsRoutes);
-  await app.register(servicesRoutes);
-  await app.register(datesRoutes);
-  await app.register(galeriaRoutes);
-  await app.register(settingsRoutes);
-  await app.register(mfaRoutes);
+  // ── System routes (no tenant prefix) ──────────────────────────────────────
+  await app.register(systemRoutes);
+
+  // ── Tenant routes (all under /:tenantSlug prefix) ──────────────────────────
+  // req.db and req.tenantSlug are populated by the preHandler above.
+  await app.register(async (tenantApp) => {
+    await tenantApp.register(authRoutes);
+    await tenantApp.register(tutorsRoutes);
+    await tenantApp.register(animalsRoutes);
+    await tenantApp.register(bookingsRoutes);
+    await tenantApp.register(contractsRoutes);
+    await tenantApp.register(servicesRoutes);
+    await tenantApp.register(datesRoutes);
+    await tenantApp.register(galeriaRoutes);
+    await tenantApp.register(settingsRoutes);
+    await tenantApp.register(mfaRoutes);
+  }, { prefix: '/:tenantSlug' });
 
   app.addHook('onClose', async () => {
     app.log.info('Server closing gracefully');

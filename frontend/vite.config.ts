@@ -9,8 +9,10 @@ export default defineConfig({
     host: true,
     port: Number(process.env['PORT'] ?? 5173),
     proxy: {
-      '/api': { target: backendUrl, changeOrigin: true },
-      '/uploads': { target: backendUrl, changeOrigin: true },
+      '/health': { target: backendUrl, changeOrigin: true },
+      '/system/api': { target: backendUrl, changeOrigin: true },
+      '^/[a-z0-9][a-z0-9-]*/api': { target: backendUrl, changeOrigin: true },
+      '^/[a-z0-9][a-z0-9-]*/uploads': { target: backendUrl, changeOrigin: true },
     },
   },
 });

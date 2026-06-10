@@ -2,7 +2,7 @@ import type { FastifyInstance } from 'fastify';
 import { eq, and } from 'drizzle-orm';
 import { v4 as uuidv4 } from 'uuid';
 import { z } from 'zod';
-import { db } from '../db/index.js';
+import type { DB } from '../db/index.js';
 import { contracts, bookings, animals, tutors, appSettings } from '../db/schema.js';
 import { saveFile, fileExists, streamFile } from '../lib/storage.js';
 import { generateContractPdf } from '../lib/pdfGenerator.js';
@@ -37,7 +37,7 @@ function parseSigBuffer(assinatura_base64: string): Buffer | null {
   return buf;
 }
 
-async function getContractFull(contract: typeof contracts.$inferSelect) {
+async function getContractFull(db: DB, contract: typeof contracts.$inferSelect) {
   const [[booking], [settings]] = await Promise.all([
     db.select().from(bookings).where(eq(bookings.id, contract.booking_id)),
     db.select().from(appSettings).where(eq(appSettings.id, 1)),
@@ -51,7 +51,7 @@ async function getContractFull(contract: typeof contracts.$inferSelect) {
   return { contract, booking: booking ?? null, animal: animal ?? null, tutor: tutor ?? null, settings: settings ?? null };
 }
 
-async function checkExpiry(contract: typeof contracts.$inferSelect) {
+async function checkExpiry(db: DB, contract: typeof contracts.$inferSelect) {
   if (contract.data_expiracao && new Date() > contract.data_expiracao) {
     await db.update(contracts).set({ status: 'expirado' }).where(eq(contracts.id, contract.id));
     return { expired: true };
@@ -65,9 +65,9 @@ export async function contractsRoutes(app: FastifyInstance): Promise<void> {
   // Admin: get by ID
   app.get('/api/v1/contracts/:id', { preHandler: [app.requireAuth] }, async (req, reply) => {
     const { id } = req.params as { id: string };
-    const [contract] = await db.select().from(contracts).where(eq(contracts.id, id));
+    const [contract] = await req.db.select().from(contracts).where(eq(contracts.id, id));
     if (!contract) return reply.status(404).send({ error: 'Contract not found', code: 'NOT_FOUND' });
-    return { data: await getContractFull(contract) };
+    return { data: await getContractFull(req.db, contract) };
   });
 
   // Public: get by token
@@ -76,20 +76,20 @@ export async function contractsRoutes(app: FastifyInstance): Promise<void> {
     if (!UUID_RE.test(token)) {
       return reply.status(400).send({ error: 'Invalid token format', code: 'INVALID_TOKEN' });
     }
-    const [contract] = await db.select().from(contracts).where(eq(contracts.token_unico, token));
+    const [contract] = await req.db.select().from(contracts).where(eq(contracts.token_unico, token));
     if (!contract) return reply.status(404).send({ error: 'Invalid token', code: 'INVALID_TOKEN' });
 
-    const state = await checkExpiry(contract);
+    const state = await checkExpiry(req.db, contract);
     if (state.expired) return reply.status(410).send({ error: 'Contract expired', code: 'TOKEN_EXPIRED' });
     if (state.signed) return reply.status(409).send({ error: 'Contract already signed', code: 'ALREADY_SIGNED' });
 
     if (contract.status === 'gerado') {
-      await db.update(contracts)
+      await req.db.update(contracts)
         .set({ status: 'visualizado', data_visualizacao: new Date() })
         .where(eq(contracts.id, contract.id));
     }
 
-    return { data: await getContractFull(contract) };
+    return { data: await getContractFull(req.db, contract) };
   });
 
   // Public: sign contract
@@ -98,10 +98,10 @@ export async function contractsRoutes(app: FastifyInstance): Promise<void> {
     if (!UUID_RE.test(token)) {
       return reply.status(400).send({ error: 'Invalid token format', code: 'INVALID_TOKEN' });
     }
-    const [contract] = await db.select().from(contracts).where(eq(contracts.token_unico, token));
+    const [contract] = await req.db.select().from(contracts).where(eq(contracts.token_unico, token));
     if (!contract) return reply.status(404).send({ error: 'Invalid token', code: 'INVALID_TOKEN' });
 
-    const state = await checkExpiry(contract);
+    const state = await checkExpiry(req.db, contract);
     if (state.expired) return reply.status(410).send({ error: 'Contract expired', code: 'TOKEN_EXPIRED' });
     if (state.signed) return reply.status(409).send({ error: 'Contract already signed', code: 'ALREADY_SIGNED' });
 
@@ -125,7 +125,7 @@ export async function contractsRoutes(app: FastifyInstance): Promise<void> {
     const timestamp = new Date().toISOString();
     const hash = generateHash(contract.token_unico, body.nome_digitado.trim(), timestamp);
 
-    await db.update(contracts).set({
+    await req.db.update(contracts).set({
       status: 'assinado',
       data_assinatura: new Date(),
       assinatura_path: savedSigPath,
@@ -136,24 +136,24 @@ export async function contractsRoutes(app: FastifyInstance): Promise<void> {
       hash_verificacao: hash,
     }).where(eq(contracts.id, contract.id));
 
-    const pdfPath = await generateContractPdf(contract.id, 'final');
+    const pdfPath = await generateContractPdf(req.db, contract.id, 'final');
     return { data: { hash, pdf_path: pdfPath } };
   });
 
   // Admin: resend (regenerate token)
   app.post('/api/v1/contracts/:id/resend', { preHandler: [app.requireAuth] }, async (req, reply) => {
     const { id } = req.params as { id: string };
-    const [contract] = await db.select().from(contracts).where(eq(contracts.id, id));
+    const [contract] = await req.db.select().from(contracts).where(eq(contracts.id, id));
     if (!contract) return reply.status(404).send({ error: 'Contract not found', code: 'NOT_FOUND' });
     if (contract.status === 'assinado') {
       return reply.status(409).send({ error: 'Contract already signed', code: 'ALREADY_SIGNED' });
     }
 
-    const [settings] = await db.select().from(appSettings).where(eq(appSettings.id, 1));
+    const [settings] = await req.db.select().from(appSettings).where(eq(appSettings.id, 1));
     const validadeHoras = settings?.contrato_validade_horas;
     const dataExpiracao = validadeHoras ? new Date(Date.now() + validadeHoras * 3_600_000) : null;
 
-    const [updated] = await db.update(contracts).set({
+    const [updated] = await req.db.update(contracts).set({
       token_unico: uuidv4(),
       status: 'gerado',
       data_geracao: new Date(),
@@ -166,7 +166,7 @@ export async function contractsRoutes(app: FastifyInstance): Promise<void> {
   // Admin: hotel signs
   app.post('/api/v1/contracts/:id/sign-hotel', { preHandler: [app.requireAuth] }, async (req, reply) => {
     const { id } = req.params as { id: string };
-    const [contract] = await db.select().from(contracts).where(eq(contracts.id, id));
+    const [contract] = await req.db.select().from(contracts).where(eq(contracts.id, id));
     if (!contract) return reply.status(404).send({ error: 'Contract not found', code: 'NOT_FOUND' });
 
     const body = SignHotelSchema.parse(req.body);
@@ -183,14 +183,14 @@ export async function contractsRoutes(app: FastifyInstance): Promise<void> {
     const sigFilename = `contrato_${contract.id}_hotel_sig.png`;
     const savedSigPath = await saveFile(sigBuffer, `uploads/signatures/${sigFilename}`);
 
-    const [updated] = await db.update(contracts).set({
+    const [updated] = await req.db.update(contracts).set({
       assinatura_hotel_path: savedSigPath,
       nome_hotel_assinante: body.nome_assinante.trim(),
       data_assinatura_hotel: new Date(),
     }).where(eq(contracts.id, id)).returning();
 
     if (contract.status === 'assinado') {
-      generateContractPdf(contract.id, 'final').catch((err: Error) =>
+      generateContractPdf(req.db, contract.id, 'final').catch((err: Error) =>
         app.log.error({ err }, 'Hotel sign PDF regen error')
       );
     }
@@ -201,12 +201,12 @@ export async function contractsRoutes(app: FastifyInstance): Promise<void> {
   // Admin: download draft PDF
   app.get('/api/v1/contracts/:id/pdf/rascunho', { preHandler: [app.requireAuth] }, async (req, reply) => {
     const { id } = req.params as { id: string };
-    const [contract] = await db.select().from(contracts).where(eq(contracts.id, id));
+    const [contract] = await req.db.select().from(contracts).where(eq(contracts.id, id));
     if (!contract) return reply.status(404).send({ error: 'Contract not found', code: 'NOT_FOUND' });
 
     const pdfPath = (await fileExists(contract.pdf_rascunho_path))
       ? contract.pdf_rascunho_path!
-      : await generateContractPdf(id, 'rascunho');
+      : await generateContractPdf(req.db, id, 'rascunho');
 
     return streamFile(reply, pdfPath, `contrato_${id}_rascunho.pdf`);
   });
@@ -214,7 +214,7 @@ export async function contractsRoutes(app: FastifyInstance): Promise<void> {
   // Admin: download final PDF
   app.get('/api/v1/contracts/:id/pdf/final', { preHandler: [app.requireAuth] }, async (req, reply) => {
     const { id } = req.params as { id: string };
-    const [contract] = await db.select().from(contracts).where(eq(contracts.id, id));
+    const [contract] = await req.db.select().from(contracts).where(eq(contracts.id, id));
     if (!contract) return reply.status(404).send({ error: 'Contract not found', code: 'NOT_FOUND' });
     if (contract.status !== 'assinado') {
       return reply.status(400).send({ error: 'Contract not signed yet', code: 'NOT_SIGNED' });
@@ -222,7 +222,7 @@ export async function contractsRoutes(app: FastifyInstance): Promise<void> {
 
     const pdfPath = (await fileExists(contract.pdf_final_path))
       ? contract.pdf_final_path!
-      : await generateContractPdf(id, 'final');
+      : await generateContractPdf(req.db, id, 'final');
 
     return streamFile(reply, pdfPath, `contrato_${id}_final.pdf`);
   });
@@ -233,7 +233,7 @@ export async function contractsRoutes(app: FastifyInstance): Promise<void> {
     if (!UUID_RE.test(token)) {
       return reply.status(400).send({ error: 'Invalid token format', code: 'INVALID_TOKEN' });
     }
-    const [contract] = await db.select().from(contracts).where(eq(contracts.token_unico, token));
+    const [contract] = await req.db.select().from(contracts).where(eq(contracts.token_unico, token));
     if (!contract) return reply.status(404).send({ error: 'Contract not found', code: 'NOT_FOUND' });
     if (contract.status !== 'assinado') {
       return reply.status(400).send({ error: 'Contract not signed yet', code: 'NOT_SIGNED' });
@@ -241,7 +241,7 @@ export async function contractsRoutes(app: FastifyInstance): Promise<void> {
 
     const pdfPath = (await fileExists(contract.pdf_final_path))
       ? contract.pdf_final_path!
-      : await generateContractPdf(contract.id, 'final');
+      : await generateContractPdf(req.db, contract.id, 'final');
 
     return streamFile(reply, pdfPath, 'contrato_assinado.pdf');
   });
@@ -251,15 +251,15 @@ export async function contractsRoutes(app: FastifyInstance): Promise<void> {
     const { hash } = req.params as { hash: string };
     if (!/^[a-f0-9]{64}$/.test(hash)) return { data: { valid: false } };
 
-    const [contract] = await db.select().from(contracts).where(eq(contracts.hash_verificacao, hash));
+    const [contract] = await req.db.select().from(contracts).where(eq(contracts.hash_verificacao, hash));
     if (!contract) return { data: { valid: false } };
 
     const [[booking], [settings]] = await Promise.all([
-      db.select().from(bookings).where(eq(bookings.id, contract.booking_id)),
-      db.select().from(appSettings).where(eq(appSettings.id, 1)),
+      req.db.select().from(bookings).where(eq(bookings.id, contract.booking_id)),
+      req.db.select().from(appSettings).where(eq(appSettings.id, 1)),
     ]);
     const [animal] = booking
-      ? await db.select().from(animals).where(eq(animals.id, booking.animal_id))
+      ? await req.db.select().from(animals).where(eq(animals.id, booking.animal_id))
       : [];
 
     return {

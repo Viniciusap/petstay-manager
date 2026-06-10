@@ -1,6 +1,5 @@
 import type { FastifyInstance } from 'fastify';
 import { eq } from 'drizzle-orm';
-import { db } from '../db/index.js';
 import { bookings, animals, tutors, appSettings } from '../db/schema.js';
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -12,7 +11,7 @@ export async function galeriaRoutes(app: FastifyInstance): Promise<void> {
       return reply.status(400).send({ error: 'Invalid token', code: 'INVALID_TOKEN' });
     }
 
-    const allBookings = await db.select().from(bookings)
+    const allBookings = await req.db.select().from(bookings)
       .where(eq(bookings.galeria_token, token));
     const booking = allBookings[0];
     if (!booking || !booking.galeria?.length) {
@@ -20,9 +19,9 @@ export async function galeriaRoutes(app: FastifyInstance): Promise<void> {
     }
 
     const [[animal], [tutor], [settings]] = await Promise.all([
-      db.select().from(animals).where(eq(animals.id, booking.animal_id)),
-      db.select().from(tutors).where(eq(tutors.id, booking.tutor_id)),
-      db.select().from(appSettings).where(eq(appSettings.id, 1)),
+      req.db.select().from(animals).where(eq(animals.id, booking.animal_id)),
+      req.db.select().from(tutors).where(eq(tutors.id, booking.tutor_id)),
+      req.db.select().from(appSettings).where(eq(appSettings.id, 1)),
     ]);
 
     return {

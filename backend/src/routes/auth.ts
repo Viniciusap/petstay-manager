@@ -3,7 +3,7 @@ import bcrypt from 'bcryptjs';
 import { v4 as uuidv4 } from 'uuid';
 import { eq } from 'drizzle-orm';
 import { z } from 'zod';
-import { db } from '../db/index.js';
+import type { DB } from '../db/index.js';
 import { appSettings } from '../db/schema.js';
 import { revoke, isRevoked } from '../lib/tokenRevocation.js';
 import { authRateLimitConfig } from '../plugins/rateLimits.js';
@@ -28,19 +28,19 @@ function parseExpiry(str: string | undefined): number {
   return n * ({ s: 1000, m: 60000, h: 3600000, d: 86400000 }[match[2]!] ?? 86400000);
 }
 
-function cookieOpts() {
+function cookieOpts(slug: string) {
   const prod = process.env['NODE_ENV'] === 'production';
-  return { httpOnly: true, secure: prod, sameSite: prod ? 'none' : 'lax', path: '/' } as const;
+  return { httpOnly: true, secure: prod, sameSite: prod ? 'none' : 'lax', path: '/' + slug } as const;
 }
 
-async function getSettings() {
+async function getSettings(db: DB) {
   const [row] = await db.select().from(appSettings).where(eq(appSettings.id, 1));
   return row;
 }
 
 export async function authRoutes(app: FastifyInstance): Promise<void> {
-  app.get('/api/v1/auth/status', async () => {
-    const settings = await getSettings();
+  app.get('/api/v1/auth/status', async (req) => {
+    const settings = await getSettings(req.db);
     return {
       data: {
         hasPassword: !!settings?.senha_hash,
@@ -51,7 +51,7 @@ export async function authRoutes(app: FastifyInstance): Promise<void> {
 
   app.post('/api/v1/auth/login', authRateLimitConfig, async (req, reply) => {
     const body = LoginSchema.parse(req.body);
-    const settings = await getSettings();
+    const settings = await getSettings(req.db);
     const isFirstLogin = !settings?.senha_hash;
 
     if (isFirstLogin) {
@@ -63,7 +63,7 @@ export async function authRoutes(app: FastifyInstance): Promise<void> {
         return reply.status(400).send({ error: 'Senha precisa ter ao menos 8 caracteres', code: 'PASSWORD_TOO_SHORT' });
       }
       const hash = await bcrypt.hash(body.senha, SALT_ROUNDS);
-      await db.insert(appSettings).values({ id: 1, senha_hash: hash })
+      await req.db.insert(appSettings).values({ id: 1, senha_hash: hash })
         .onConflictDoUpdate({ target: appSettings.id, set: { senha_hash: hash } });
     } else {
       const ok = await bcrypt.compare(body.senha, settings!.senha_hash!);
@@ -72,9 +72,9 @@ export async function authRoutes(app: FastifyInstance): Promise<void> {
 
     // If MFA is enabled, issue a short-lived pending token instead of the real JWT
     if (!isFirstLogin && settings?.mfa_enabled && settings.mfa_secret) {
-      const pendingToken = app.jwt.sign({ role: 'mfa_pending' }, { expiresIn: '5m' });
+      const pendingToken = app.jwt.sign({ role: 'mfa_pending', tenant: req.tenantSlug }, { expiresIn: '5m' });
       void reply.setCookie('petstay_mfa_pending', pendingToken, {
-        ...cookieOpts(),
+        ...cookieOpts(req.tenantSlug),
         maxAge: 5 * 60 * 1000,
       });
       return { data: { mfa_required: true } };
@@ -82,11 +82,11 @@ export async function authRoutes(app: FastifyInstance): Promise<void> {
 
     const expiry = process.env['JWT_EXPIRY'] ?? '7d';
     const jti = uuidv4();
-    const token = app.jwt.sign({ role: 'admin', jti }, { expiresIn: expiry });
+    const token = app.jwt.sign({ role: 'admin', tenant: req.tenantSlug, jti }, { expiresIn: expiry });
     const decoded = app.jwt.decode<{ exp: number }>(token);
 
     void reply.setCookie('petstay_token', token, {
-      ...cookieOpts(),
+      ...cookieOpts(req.tenantSlug),
       maxAge: parseExpiry(expiry),
     });
     return {
@@ -119,13 +119,13 @@ export async function authRoutes(app: FastifyInstance): Promise<void> {
       } catch { /* token already invalid */ }
     }
     const prod = process.env['NODE_ENV'] === 'production';
-    void reply.clearCookie('petstay_token', { path: '/', sameSite: prod ? 'none' : 'lax', secure: prod });
+    void reply.clearCookie('petstay_token', { path: '/' + req.tenantSlug, sameSite: prod ? 'none' : 'lax', secure: prod });
     return { data: { ok: true } };
   });
 
   app.post('/api/v1/auth/password', { preHandler: [app.requireAuth], ...authRateLimitConfig }, async (req, reply) => {
     const body = ChangePasswordSchema.parse(req.body);
-    const settings = await getSettings();
+    const settings = await getSettings(req.db);
     if (settings?.senha_hash) {
       if (!body.senha_atual) {
         return reply.status(400).send({ error: 'Senha atual obrigatória', code: 'CURRENT_PASSWORD_REQUIRED' });
@@ -134,7 +134,7 @@ export async function authRoutes(app: FastifyInstance): Promise<void> {
       if (!ok) return reply.status(401).send({ error: 'Senha atual incorreta', code: 'INVALID_PASSWORD' });
     }
     const hash = await bcrypt.hash(body.senha_nova, SALT_ROUNDS);
-    await db.insert(appSettings).values({ id: 1, senha_hash: hash })
+    await req.db.insert(appSettings).values({ id: 1, senha_hash: hash })
       .onConflictDoUpdate({ target: appSettings.id, set: { senha_hash: hash } });
     return { data: { updated: true } };
   });

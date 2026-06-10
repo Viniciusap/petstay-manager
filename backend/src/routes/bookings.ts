@@ -4,7 +4,6 @@ import { eq, and, or, ilike } from 'drizzle-orm';
 import path from 'node:path';
 import { v4 as uuidv4 } from 'uuid';
 import { z } from 'zod';
-import { db } from '../db/index.js';
 import { bookings, animals, tutors, contracts, appSettings } from '../db/schema.js';
 import { saveFile, deleteFile } from '../lib/storage.js';
 import { generateContractPdf } from '../lib/pdfGenerator.js';
@@ -49,7 +48,7 @@ export async function bookingsRoutes(app: FastifyInstance): Promise<void> {
   app.get('/api/v1/bookings', { preHandler: [app.requireAuth] }, async (req) => {
     const { status, data: dateFilter, q } = req.query as { status?: string; data?: string; q?: string };
 
-    let rows = await db.select().from(bookings).orderBy(bookings.created_at);
+    let rows = await req.db.select().from(bookings).orderBy(bookings.created_at);
 
     if (status) rows = rows.filter(b => b.status_presenca === status);
     if (dateFilter) rows = rows.filter(b => b.data_entrada === dateFilter || b.data_saida === dateFilter);
@@ -57,8 +56,8 @@ export async function bookingsRoutes(app: FastifyInstance): Promise<void> {
     if (q) {
       const lower = q.toLowerCase();
       const [animalRows, tutorRows] = await Promise.all([
-        db.select().from(animals),
-        db.select().from(tutors),
+        req.db.select().from(animals),
+        req.db.select().from(tutors),
       ]);
       const animalMap = new Map(animalRows.map(a => [a.id, a]));
       const tutorMap = new Map(tutorRows.map(t => [t.id, t]));
@@ -70,8 +69,8 @@ export async function bookingsRoutes(app: FastifyInstance): Promise<void> {
     }
 
     const [animalRows, tutorRows] = await Promise.all([
-      db.select().from(animals),
-      db.select().from(tutors),
+      req.db.select().from(animals),
+      req.db.select().from(tutors),
     ]);
     const animalMap = new Map(animalRows.map(a => [a.id, a]));
     const tutorMap = new Map(tutorRows.map(t => [t.id, t]));
@@ -89,11 +88,7 @@ export async function bookingsRoutes(app: FastifyInstance): Promise<void> {
     const { mes } = req.query as { mes?: string };
     if (!mes) return { data: { bookings: [], blocked: [] } };
 
-    const [bookingRows, blockedRows] = await Promise.all([
-      db.select().from(bookings),
-      db.select().from(bookings), // placeholder — blocked dates from dates route
-    ]);
-
+    const bookingRows = await req.db.select().from(bookings);
     const filtered = bookingRows.filter(b =>
       b.data_entrada?.startsWith(mes) || b.data_saida?.startsWith(mes)
     );
@@ -103,13 +98,13 @@ export async function bookingsRoutes(app: FastifyInstance): Promise<void> {
 
   app.get('/api/v1/bookings/:id', { preHandler: [app.requireAuth] }, async (req, reply) => {
     const { id } = req.params as { id: string };
-    const [booking] = await db.select().from(bookings).where(eq(bookings.id, id));
+    const [booking] = await req.db.select().from(bookings).where(eq(bookings.id, id));
     if (!booking) return reply.status(404).send({ error: 'Booking not found', code: 'NOT_FOUND' });
 
     const [[animal], [tutor], [contract]] = await Promise.all([
-      db.select().from(animals).where(eq(animals.id, booking.animal_id)),
-      db.select().from(tutors).where(eq(tutors.id, booking.tutor_id)),
-      db.select().from(contracts).where(eq(contracts.booking_id, id)),
+      req.db.select().from(animals).where(eq(animals.id, booking.animal_id)),
+      req.db.select().from(tutors).where(eq(tutors.id, booking.tutor_id)),
+      req.db.select().from(contracts).where(eq(contracts.booking_id, id)),
     ]);
 
     return { data: { ...booking, animal: animal ?? null, tutor: tutor ?? null, contract: contract ?? null } };
@@ -120,14 +115,14 @@ export async function bookingsRoutes(app: FastifyInstance): Promise<void> {
 
     let valorDiaria = body.valor_diaria;
     if (valorDiaria === undefined) {
-      const [settings] = await db.select().from(appSettings).where(eq(appSettings.id, 1));
+      const [settings] = await req.db.select().from(appSettings).where(eq(appSettings.id, 1));
       valorDiaria = parseFloat(settings?.diaria_base ?? '80');
     }
 
     const servicos = body.servicos_adicionais ?? [];
     const { total } = calcTotal(body.data_entrada, body.data_saida, valorDiaria, servicos);
 
-    const [booking] = await db.insert(bookings).values({
+    const [booking] = await req.db.insert(bookings).values({
       animal_id: body.animal_id,
       tutor_id: body.tutor_id,
       data_entrada: body.data_entrada,
@@ -140,18 +135,18 @@ export async function bookingsRoutes(app: FastifyInstance): Promise<void> {
       observacoes: body.observacoes ?? '',
     }).returning();
 
-    const [settings] = await db.select().from(appSettings).where(eq(appSettings.id, 1));
+    const [settings] = await req.db.select().from(appSettings).where(eq(appSettings.id, 1));
     const validadeHoras = settings?.contrato_validade_horas;
     const dataExpiracao = validadeHoras ? new Date(Date.now() + validadeHoras * 3_600_000) : null;
 
-    const [contract] = await db.insert(contracts).values({
+    const [contract] = await req.db.insert(contracts).values({
       booking_id: booking!.id,
       token_unico: uuidv4(),
       status: 'gerado',
       data_expiracao: dataExpiracao,
     }).returning();
 
-    generateContractPdf(contract!.id, 'rascunho').catch((err: Error) =>
+    generateContractPdf(req.db, contract!.id, 'rascunho').catch((err: Error) =>
       app.log.error({ err }, 'Draft PDF error')
     );
 
@@ -164,14 +159,14 @@ export async function bookingsRoutes(app: FastifyInstance): Promise<void> {
     const updates: Record<string, unknown> = { ...patch };
     if (patch.valor_diaria !== undefined) updates['valor_diaria'] = String(patch.valor_diaria);
     if (patch.valor_total !== undefined) updates['valor_total'] = String(patch.valor_total);
-    const [updated] = await db.update(bookings).set(updates).where(eq(bookings.id, id)).returning();
+    const [updated] = await req.db.update(bookings).set(updates).where(eq(bookings.id, id)).returning();
     if (!updated) return reply.status(404).send({ error: 'Booking not found', code: 'NOT_FOUND' });
     return { data: updated };
   });
 
   app.put('/api/v1/bookings/:id/checkin', { preHandler: [app.requireAuth] }, async (req, reply) => {
     const { id } = req.params as { id: string };
-    const [updated] = await db.update(bookings).set({ status_presenca: 'check-in' })
+    const [updated] = await req.db.update(bookings).set({ status_presenca: 'check-in' })
       .where(eq(bookings.id, id)).returning();
     if (!updated) return reply.status(404).send({ error: 'Booking not found', code: 'NOT_FOUND' });
     return { data: updated };
@@ -179,7 +174,7 @@ export async function bookingsRoutes(app: FastifyInstance): Promise<void> {
 
   app.put('/api/v1/bookings/:id/checkout', { preHandler: [app.requireAuth] }, async (req, reply) => {
     const { id } = req.params as { id: string };
-    const [updated] = await db.update(bookings).set({ status_presenca: 'check-out' })
+    const [updated] = await req.db.update(bookings).set({ status_presenca: 'check-out' })
       .where(eq(bookings.id, id)).returning();
     if (!updated) return reply.status(404).send({ error: 'Booking not found', code: 'NOT_FOUND' });
     return { data: updated };
@@ -191,7 +186,7 @@ export async function bookingsRoutes(app: FastifyInstance): Promise<void> {
     if (!['pendente', 'pago', 'parcial'].includes(status_pagamento ?? '')) {
       return reply.status(400).send({ error: 'Invalid payment status', code: 'VALIDATION_ERROR' });
     }
-    const [updated] = await db.update(bookings).set({ status_pagamento: status_pagamento! })
+    const [updated] = await req.db.update(bookings).set({ status_pagamento: status_pagamento! })
       .where(eq(bookings.id, id)).returning();
     if (!updated) return reply.status(404).send({ error: 'Booking not found', code: 'NOT_FOUND' });
     return { data: updated };
@@ -199,15 +194,15 @@ export async function bookingsRoutes(app: FastifyInstance): Promise<void> {
 
   app.delete('/api/v1/bookings/:id', { preHandler: [app.requireAuth] }, async (req, reply) => {
     const { id } = req.params as { id: string };
-    const [booking] = await db.update(bookings).set({ status_presenca: 'cancelado' })
+    const [booking] = await req.db.update(bookings).set({ status_presenca: 'cancelado' })
       .where(eq(bookings.id, id)).returning();
     if (!booking) return reply.status(404).send({ error: 'Booking not found', code: 'NOT_FOUND' });
 
-    const activeContract = await db.select().from(contracts)
+    const activeContract = await req.db.select().from(contracts)
       .where(and(eq(contracts.booking_id, id)));
     const toCancel = activeContract.find(c => c.status !== 'assinado' && c.status !== 'cancelado');
     if (toCancel) {
-      await db.update(contracts).set({ status: 'cancelado' }).where(eq(contracts.id, toCancel.id));
+      await req.db.update(contracts).set({ status: 'cancelado' }).where(eq(contracts.id, toCancel.id));
     }
 
     return { data: booking };
@@ -230,7 +225,7 @@ export async function bookingsRoutes(app: FastifyInstance): Promise<void> {
 
     if (!saved.length) return reply.status(400).send({ error: 'No files', code: 'NO_FILE' });
 
-    const [booking] = await db.select().from(bookings).where(eq(bookings.id, id));
+    const [booking] = await req.db.select().from(bookings).where(eq(bookings.id, id));
     if (!booking) return reply.status(404).send({ error: 'Booking not found', code: 'NOT_FOUND' });
 
     const galeria = [
@@ -238,7 +233,7 @@ export async function bookingsRoutes(app: FastifyInstance): Promise<void> {
       ...saved.map(p => ({ path: p, uploaded_at: new Date().toISOString() })),
     ];
     const galeria_token = booking.galeria_token ?? uuidv4();
-    const [updated] = await db.update(bookings).set({ galeria, galeria_token })
+    const [updated] = await req.db.update(bookings).set({ galeria, galeria_token })
       .where(eq(bookings.id, id)).returning();
     return { data: updated };
   });
@@ -246,7 +241,7 @@ export async function bookingsRoutes(app: FastifyInstance): Promise<void> {
   // Delete single gallery photo
   app.delete('/api/v1/bookings/:id/galeria/:index', { preHandler: [app.requireAuth] }, async (req, reply) => {
     const { id, index: idxStr } = req.params as { id: string; index: string };
-    const [booking] = await db.select().from(bookings).where(eq(bookings.id, id));
+    const [booking] = await req.db.select().from(bookings).where(eq(bookings.id, id));
     if (!booking) return reply.status(404).send({ error: 'Booking not found', code: 'NOT_FOUND' });
 
     const idx = parseInt(idxStr, 10);
@@ -258,7 +253,7 @@ export async function bookingsRoutes(app: FastifyInstance): Promise<void> {
     const photo = galeria[idx];
     if (photo?.path) await deleteFile(photo.path);
     galeria.splice(idx, 1);
-    const [updated] = await db.update(bookings).set({ galeria }).where(eq(bookings.id, id)).returning();
+    const [updated] = await req.db.update(bookings).set({ galeria }).where(eq(bookings.id, id)).returning();
     return { data: updated };
   });
 }

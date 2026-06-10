@@ -50,12 +50,12 @@ function RequireAuth({ children }: { children: React.ReactNode }) {
   return <>{children}</>;
 }
 
-export default function App() {
+export default function App({ basename = '/' }: { basename?: string }) {
   return (
     <ThemeProvider>
       <TranslationProvider>
           <AuthProvider>
-            <BrowserRouter>
+            <BrowserRouter basename={basename}>
               <Routes>
                 {/* Public routes */}
                 <Route path="/login" element={<LoginPage />} />

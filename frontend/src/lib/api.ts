@@ -1,5 +1,15 @@
-export const apiBase = (import.meta.env.VITE_API_URL as string | undefined) ?? '/api/v1';
-export const uploadsBase = apiBase.replace(/\/api\/v1$/, '');
+function deriveSlug(): string {
+  if (typeof window === 'undefined') return '';
+  const segs = window.location.pathname.split('/').filter(Boolean);
+  const first = segs[0] ?? '';
+  const RESERVED = new Set(['system', 'health', 'api', 'assets', 'uploads', 'public']);
+  if (!first || RESERVED.has(first)) return '';
+  return first;
+}
+
+export const tenantSlug = deriveSlug();
+export const apiBase = tenantSlug ? `/${tenantSlug}/api/v1` : '/api/v1';
+export const uploadsBase = tenantSlug ? `/${tenantSlug}` : '';
 
 export function resolveFileUrl(storedPath: string | null | undefined): string | null {
   if (!storedPath) return null;

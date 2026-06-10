@@ -51,8 +51,15 @@ export interface GaleriaPhoto {
   uploaded_at: string;
 }
 
+import type { DB } from '../db/index.js';
+
 declare module 'fastify' {
   interface FastifyInstance {
     requireAuth: (request: FastifyRequest, reply: FastifyReply) => Promise<void>;
+    requireSystemAuth: (request: FastifyRequest, reply: FastifyReply) => Promise<void>;
+  }
+  interface FastifyRequest {
+    tenantSlug: string;
+    db: DB;
   }
 }

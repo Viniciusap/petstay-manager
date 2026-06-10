@@ -1,7 +1,6 @@
 import type { FastifyInstance } from 'fastify';
 import { eq } from 'drizzle-orm';
 import { z } from 'zod';
-import { db } from '../db/index.js';
 import { blockedDates } from '../db/schema.js';
 
 const CreateBlockedDateSchema = z.object({
@@ -10,14 +9,14 @@ const CreateBlockedDateSchema = z.object({
 });
 
 export async function datesRoutes(app: FastifyInstance): Promise<void> {
-  app.get('/api/v1/dates/blocked', { preHandler: [app.requireAuth] }, async () => {
-    const rows = await db.select().from(blockedDates).orderBy(blockedDates.data);
+  app.get('/api/v1/dates/blocked', { preHandler: [app.requireAuth] }, async (req) => {
+    const rows = await req.db.select().from(blockedDates).orderBy(blockedDates.data);
     return { data: rows, meta: { total: rows.length } };
   });
 
   app.post('/api/v1/dates/blocked', { preHandler: [app.requireAuth] }, async (req, reply) => {
     const body = CreateBlockedDateSchema.parse(req.body);
-    const [row] = await db.insert(blockedDates).values({
+    const [row] = await req.db.insert(blockedDates).values({
       data: body.data,
       motivo: body.motivo ?? '',
     }).returning();
@@ -26,7 +25,7 @@ export async function datesRoutes(app: FastifyInstance): Promise<void> {
 
   app.delete('/api/v1/dates/blocked/:id', { preHandler: [app.requireAuth] }, async (req, reply) => {
     const { id } = req.params as { id: string };
-    const [deleted] = await db.delete(blockedDates).where(eq(blockedDates.id, id)).returning();
+    const [deleted] = await req.db.delete(blockedDates).where(eq(blockedDates.id, id)).returning();
     if (!deleted) return reply.status(404).send({ error: 'Date not found', code: 'NOT_FOUND' });
     return { data: { deleted: true } };
   });

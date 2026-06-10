@@ -6,7 +6,7 @@ import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import fs from 'node:fs/promises';
 import { z } from 'zod';
-import { db } from '../db/index.js';
+import type { DB } from '../db/index.js';
 import { appSettings } from '../db/schema.js';
 import { saveFile, deleteFile } from '../lib/storage.js';
 import { authRateLimitConfig } from '../plugins/rateLimits.js';
@@ -14,8 +14,8 @@ import { authRateLimitConfig } from '../plugins/rateLimits.js';
 const execFileAsync = promisify(execFile);
 const SAFE_FNAME = /^[\w-]+\.sql$/;
 
-function getBackupDir(): string {
-  return path.resolve(process.env['DATA_DIR'] ?? './data', 'backups');
+function getBackupDir(slug: string): string {
+  return path.resolve(process.env['DATA_DIR'] ?? './data', slug, 'backups');
 }
 
 const UpdateSettingsSchema = z.object({
@@ -36,20 +36,20 @@ const UpdateSettingsSchema = z.object({
 
 const ALLOWED_LOGO_EXTS = ['.png', '.jpg', '.jpeg', '.webp'];
 
-async function getSettings() {
+async function getSettings(db: DB) {
   const [row] = await db.select().from(appSettings).where(eq(appSettings.id, 1));
   return row;
 }
 
-async function upsertSettings(patch: Record<string, unknown>) {
+async function upsertSettings(db: DB, patch: Record<string, unknown>) {
   const [row] = await db.insert(appSettings).values({ id: 1, ...patch })
     .onConflictDoUpdate({ target: appSettings.id, set: patch }).returning();
   return row;
 }
 
 export async function settingsRoutes(app: FastifyInstance): Promise<void> {
-  app.get('/api/v1/settings', { preHandler: [app.requireAuth] }, async () => {
-    const settings = await getSettings();
+  app.get('/api/v1/settings', { preHandler: [app.requireAuth] }, async (req) => {
+    const settings = await getSettings(req.db);
     return { data: settings };
   });
 
@@ -57,7 +57,7 @@ export async function settingsRoutes(app: FastifyInstance): Promise<void> {
     const patch = UpdateSettingsSchema.parse(req.body);
     const updates: Record<string, unknown> = { ...patch };
     if (patch.diaria_base !== undefined) updates['diaria_base'] = String(patch.diaria_base);
-    const settings = await upsertSettings(updates);
+    const settings = await upsertSettings(req.db, updates);
     return { data: settings };
   });
 
@@ -72,14 +72,14 @@ export async function settingsRoutes(app: FastifyInstance): Promise<void> {
 
     const buf = await data.toBuffer();
     const logo_path = await saveFile(buf, `uploads/logo/logo${ext}`);
-    const settings = await upsertSettings({ logo_path });
+    const settings = await upsertSettings(req.db, { logo_path });
     return { data: settings };
   });
 
-  app.delete('/api/v1/settings/logo', { preHandler: [app.requireAuth] }, async () => {
-    const current = await getSettings();
+  app.delete('/api/v1/settings/logo', { preHandler: [app.requireAuth] }, async (req) => {
+    const current = await getSettings(req.db);
     if (current?.logo_path) await deleteFile(current.logo_path);
-    const settings = await upsertSettings({ logo_path: null });
+    const settings = await upsertSettings(req.db, { logo_path: null });
     return { data: settings };
   });
 
@@ -106,22 +106,22 @@ export async function settingsRoutes(app: FastifyInstance): Promise<void> {
     }
 
     const assinatura_hotel_path = await saveFile(buf, 'uploads/signatures/hotel_sig.png');
-    const settings = await upsertSettings({
+    const settings = await upsertSettings(req.db, {
       assinatura_hotel_path,
       nome_hotel_assinante: nome_representante.trim(),
     });
     return { data: { assinatura_hotel_path, nome_hotel_assinante: settings?.nome_hotel_assinante } };
   });
 
-  app.delete('/api/v1/settings/assinatura', { preHandler: [app.requireAuth] }, async () => {
-    const current = await getSettings();
+  app.delete('/api/v1/settings/assinatura', { preHandler: [app.requireAuth] }, async (req) => {
+    const current = await getSettings(req.db);
     if (current?.assinatura_hotel_path) await deleteFile(current.assinatura_hotel_path);
-    const settings = await upsertSettings({ assinatura_hotel_path: null, nome_hotel_assinante: null });
+    const settings = await upsertSettings(req.db, { assinatura_hotel_path: null, nome_hotel_assinante: null });
     return { data: settings };
   });
 
-  app.get('/api/v1/settings/backup/list', { preHandler: [app.requireAuth] }, async () => {
-    const dir = getBackupDir();
+  app.get('/api/v1/settings/backup/list', { preHandler: [app.requireAuth] }, async (req) => {
+    const dir = getBackupDir(req.tenantSlug);
     await fs.mkdir(dir, { recursive: true });
     const files = await fs.readdir(dir);
     const backups = await Promise.all(
@@ -136,11 +136,11 @@ export async function settingsRoutes(app: FastifyInstance): Promise<void> {
     return { data: backups };
   });
 
-  app.post('/api/v1/settings/backup', { preHandler: [app.requireAuth] }, async (_, reply) => {
+  app.post('/api/v1/settings/backup', { preHandler: [app.requireAuth] }, async (req, reply) => {
     const dbUrl = process.env['POSTGRES_URL'];
     if (!dbUrl) return reply.status(500).send({ error: 'POSTGRES_URL not set', code: 'MISSING_ENV' });
 
-    const dir = getBackupDir();
+    const dir = getBackupDir(req.tenantSlug);
     await fs.mkdir(dir, { recursive: true });
 
     const ts = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
@@ -148,7 +148,7 @@ export async function settingsRoutes(app: FastifyInstance): Promise<void> {
     const fpath = path.join(dir, fname);
 
     try {
-      await execFileAsync('pg_dump', ['--clean', '--if-exists', '-f', fpath, dbUrl]);
+      await execFileAsync('pg_dump', ['--clean', '--if-exists', '--schema', req.tenantSlug, '-f', fpath, dbUrl]);
       const stat = await fs.stat(fpath);
       return { data: { fname, size: stat.size, mtime: stat.mtime.toISOString() } };
     } catch (err: any) {
@@ -161,7 +161,7 @@ export async function settingsRoutes(app: FastifyInstance): Promise<void> {
     const { fname } = req.params as { fname: string };
     if (!SAFE_FNAME.test(fname)) return reply.status(400).send({ error: 'Invalid filename', code: 'INVALID_FNAME' });
 
-    const dir = getBackupDir();
+    const dir = getBackupDir(req.tenantSlug);
     const fpath = path.join(dir, fname);
     if (!fpath.startsWith(dir + path.sep) && fpath !== path.join(dir, fname)) {
       return reply.status(400).send({ error: 'Invalid path', code: 'INVALID_PATH' });
