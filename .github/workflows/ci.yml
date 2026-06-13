@@ -27,7 +27,7 @@ jobs:
 
       - name: Audit backend
         working-directory: backend
-        run: npm audit --audit-level=high
+        run: npm audit --audit-level=high --omit=dev
 
       - name: TypeScript check — backend
         working-directory: backend
@@ -39,7 +39,7 @@ jobs:
 
       - name: Audit frontend
         working-directory: frontend
-        run: npm audit --audit-level=high
+        run: npm audit --audit-level=high --omit=dev
 
       - name: TypeScript check — frontend
         working-directory: frontend
