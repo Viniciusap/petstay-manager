@@ -23,7 +23,7 @@ jobs:
 
       - name: Install backend deps
         working-directory: backend
-        run: npm ci
+        run: npm install
 
       - name: Audit backend
         working-directory: backend
@@ -35,7 +35,7 @@ jobs:
 
       - name: Install frontend deps
         working-directory: frontend
-        run: npm ci
+        run: npm install
 
       - name: Audit frontend
         working-directory: frontend
