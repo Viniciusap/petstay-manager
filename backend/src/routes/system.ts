@@ -25,7 +25,9 @@ export async function systemRoutes(app: FastifyInstance): Promise<void> {
 
     if (!valid) return reply.status(401).send({ error: 'Senha incorreta', code: 'INVALID_PASSWORD' });
 
-    const token = (app as any).systemSign({ role: 'system' }, { expiresIn: '8h' });
+    const jwtSys = (app as any).jwt?.system;
+    if (!jwtSys) return reply.status(500).send({ error: 'System JWT não inicializado', code: 'JWT_INIT_ERROR' });
+    const token = jwtSys.sign({ role: 'system' }, { expiresIn: '8h' });
     void reply.setCookie('petstay_system_token', token, { ...cookieOpts(), maxAge: 8 * 3600 * 1000 });
     return { data: { ok: true } };
   });

@@ -19,15 +19,17 @@ async function _authPlugin(app: FastifyInstance): Promise<void> {
   await app.register(fastifyJwt, {
     secret: systemSecret,
     namespace: 'system',
-    jwtVerify: 'systemVerify',
-    jwtSign: 'systemSign',
     cookie: { cookieName: 'petstay_system_token', signed: false },
   } as Parameters<typeof fastifyJwt>[1]);
 
   app.decorate('requireAuth', async function (request: FastifyRequest, reply: FastifyReply) {
     try {
       await request.jwtVerify();
-      const payload = request.user as { jti?: string; tenant?: string };
+      const payload = request.user as { jti?: string; tenant?: string; role?: string };
+      // Block system tokens from accessing tenant routes
+      if (payload.role === 'system') {
+        return reply.status(403).send({ error: 'Token inválido para rota de tenant', code: 'SYSTEM_TOKEN' });
+      }
       if (payload.jti && isRevoked(payload.jti)) {
         return reply.status(401).send({ error: 'Token revoked', code: 'TOKEN_REVOKED' });
       }
@@ -42,7 +44,11 @@ async function _authPlugin(app: FastifyInstance): Promise<void> {
 
   app.decorate('requireSystemAuth', async function (request: FastifyRequest, reply: FastifyReply) {
     try {
-      await (request as any).systemVerify();
+      const token = request.cookies?.['petstay_system_token'];
+      if (!token) throw new Error('no token');
+      const jwtSys = (app as any).jwt?.system;
+      if (!jwtSys) throw new Error('system jwt not initialized');
+      await jwtSys.verify(token);
     } catch {
       return reply.status(401).send({ error: 'Unauthorized', code: 'UNAUTHORIZED' });
     }
