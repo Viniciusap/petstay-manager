@@ -11,6 +11,10 @@ export interface Settings {
   contrato_validade_horas: number | null;
   base_url: string;
   onboarding_completo: boolean;
+  clausulas_pt?: string[];
+  clausulas_en?: string[];
+  assinatura_hotel_path?: string | null;
+  nome_hotel_assinante?: string | null;
 }
 
 export interface Tutor {
@@ -47,6 +51,11 @@ export interface ServiceItem {
   valor: number;
 }
 
+export interface GaleriaPhoto {
+  path: string;
+  uploaded_at: string;
+}
+
 export interface Booking {
   id: string;
   animal_id: string;
@@ -60,6 +69,8 @@ export interface Booking {
   servicos_adicionais: ServiceItem[];
   observacoes: string;
   created_at: string;
+  galeria?: GaleriaPhoto[];
+  galeria_token?: string | null;
   animal?: Animal;
   tutor?: Tutor;
   contract?: Contract;
@@ -69,7 +80,7 @@ export interface Contract {
   id: string;
   booking_id: string;
   token_unico: string;
-  status: 'gerado' | 'visualizado' | 'assinado' | 'expirado';
+  status: 'gerado' | 'visualizado' | 'assinado' | 'expirado' | 'cancelado';
   data_geracao: string;
   data_expiracao: string | null;
   data_visualizacao: string | null;
@@ -82,6 +93,9 @@ export interface Contract {
   hash_verificacao: string | null;
   pdf_rascunho_path: string | null;
   pdf_final_path: string | null;
+  assinatura_hotel_path?: string | null;
+  nome_hotel_assinante?: string | null;
+  data_assinatura_hotel?: string | null;
 }
 
 export interface Service {
@@ -99,9 +113,8 @@ export interface BlockedDate {
 }
 
 export interface ApiResponse<T> {
-  success: boolean;
-  data: T;
-  total?: number;
+  data?: T;
   error?: string;
   code?: string;
+  meta?: { total?: number };
 }

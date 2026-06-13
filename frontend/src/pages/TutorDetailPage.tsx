@@ -1,8 +1,12 @@
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { useForm, Controller } from 'react-hook-form';
+import { zodResolver } from '@hookform/resolvers/zod';
+import { z } from 'zod';
+import { toast } from 'sonner';
 import api from '../lib/api';
 import { useTranslation } from '../contexts/TranslationContext';
-import { useToast } from '../contexts/ToastContext';
 import Button from '../components/ui/Button';
 import Input from '../components/ui/Input';
 import PhoneInput from '../components/ui/PhoneInput';
@@ -18,79 +22,109 @@ import type { Tutor, Animal, Booking } from '../types';
 function fmtDate(iso: string) { return new Date(iso).toLocaleDateString('pt-BR'); }
 function fmtBRL(v: number) { return `R$ ${v.toFixed(2).replace('.', ',')}`; }
 
-export default function TutorDetailPage() {
+const tutorSchema = z.object({
+  nome: z.string().min(1, 'Nome obrigatório'),
+  telefone: z.string().min(1, 'Telefone obrigatório').refine(isValidPhone, 'Telefone inválido'),
+  email: z.string().optional().refine(v => !v || isValidEmail(v), 'E-mail inválido'),
+  endereco: z.string().optional(),
+});
+type TutorFields = z.infer<typeof tutorSchema>;
+
+const animalSchema = z.object({
+  nome: z.string().min(1, 'Nome obrigatório'),
+  especie: z.enum(['cachorro', 'gato', 'outro']),
+  raca: z.string().optional(),
+});
+type AnimalFields = z.infer<typeof animalSchema>;
+
+interface TutorWithAnimals extends Tutor { animals: Animal[] }
+
+export function TutorDetailPage() {
   const { id } = useParams<{ id: string }>();
   const { t } = useTranslation();
-  const { toast } = useToast();
   const navigate = useNavigate();
-  const [tutor, setTutor] = useState<Tutor | null>(null);
-  const [animals, setAnimals] = useState<Animal[]>([]);
-  const [bookings, setBookings] = useState<Booking[]>([]);
-  const [loading, setLoading] = useState(true);
+  const queryClient = useQueryClient();
   const [editing, setEditing] = useState(false);
-  const [saving, setSaving] = useState(false);
-  const [deleting, setDeleting] = useState(false);
-  const [confirmDelete, setConfirmDelete] = useState(false);
-  const [form, setForm] = useState<Partial<Tutor>>({});
   const [animalModal, setAnimalModal] = useState(false);
-  const [animalForm, setAnimalForm] = useState({ nome: '', especie: 'cachorro', raca: '' });
-  const [savingAnimal, setSavingAnimal] = useState(false);
+  const [confirmDelete, setConfirmDelete] = useState(false);
 
-  function load() {
-    Promise.all([
-      api.get(`/tutors/${id}`),
-      api.get(`/bookings?q=`),
-    ]).then(([tRes, bRes]: any[]) => {
-      setTutor(tRes.data);
-      setAnimals(tRes.data.animals || []);
-      setForm(tRes.data);
-      setBookings((bRes.data as Booking[]).filter(b => b.tutor_id === id));
-    }).finally(() => setLoading(false));
+  const { data, isLoading } = useQuery({
+    queryKey: ['tutor', id],
+    queryFn: async () => {
+      const [tRes, bRes] = await Promise.all([
+        api.get<TutorWithAnimals>(`/tutors/${id}`),
+        api.get<Booking[]>('/bookings?q='),
+      ]);
+      const tutor = tRes.data!;
+      const bookings = (bRes.data ?? []).filter(b => b.tutor_id === id);
+      return { tutor, animals: tutor.animals ?? [], bookings };
+    },
+  });
+
+  const tutor = data?.tutor ?? null;
+  const animals = data?.animals ?? [];
+  const bookings = data?.bookings ?? [];
+
+  const { register, handleSubmit, reset, control, formState: { errors } } = useForm<TutorFields>({
+    resolver: zodResolver(tutorSchema),
+  });
+
+  function startEditing() {
+    if (!tutor) return;
+    reset({ nome: tutor.nome, telefone: tutor.telefone, email: tutor.email || '', endereco: tutor.endereco || '' });
+    setEditing(true);
   }
 
-  useEffect(() => { load(); }, [id]);
-
-  async function saveAnimal() {
-    if (!animalForm.nome.trim()) return;
-    setSavingAnimal(true);
-    try {
-      await api.post('/animals', { ...animalForm, tutor_id: id });
-      toast('Animal cadastrado!');
-      setAnimalModal(false);
-      setAnimalForm({ nome: '', especie: 'cachorro', raca: '' });
-      load();
-    } catch { toast('Erro ao cadastrar animal', 'error'); }
-    finally { setSavingAnimal(false); }
-  }
-
-  async function save() {
-    if (form.telefone && !isValidPhone(form.telefone)) { return; }
-    if (form.email && !isValidEmail(form.email)) { return; }
-    setSaving(true);
-    try {
-      await api.put(`/tutors/${id}`, form);
-      toast('Salvo!');
+  const { mutate: saveTutor, isPending: saving } = useMutation({
+    mutationFn: (d: TutorFields) => api.put(`/tutors/${id}`, d),
+    onSuccess: () => {
+      toast.success('Salvo!');
       setEditing(false);
-      load();
-    } catch { toast('Erro', 'error'); }
-    finally { setSaving(false); }
-  }
+      queryClient.invalidateQueries({ queryKey: ['tutor', id] });
+    },
+    onError: () => toast.error('Erro'),
+  });
 
-  async function deleteTutor() {
-    setDeleting(true);
-    try {
-      await api.delete(`/tutors/${id}`);
-      toast('Tutor removido');
+  const { mutate: deleteTutor, isPending: deleting } = useMutation({
+    mutationFn: () => api.delete(`/tutors/${id}`),
+    onSuccess: () => {
+      toast.success('Tutor removido');
       navigate('/tutors');
-    } catch (err: any) {
-      toast(err?.error || 'Erro ao remover', 'error');
-    } finally {
-      setDeleting(false);
+    },
+    onError: (err: any) => {
+      toast.error(err?.message || 'Erro ao remover');
       setConfirmDelete(false);
-    }
-  }
+    },
+  });
 
-  if (loading) return <div className="flex justify-center py-20"><Spinner size="lg" /></div>;
+  const { mutate: deleteAccount, isPending: deletingAccount } = useMutation({
+    mutationFn: () => api.delete(`/tutors/${id}/account`),
+    onSuccess: () => {
+      toast.success('Dados do tutor excluídos permanentemente (LGPD)');
+      navigate('/tutors');
+    },
+    onError: (err: any) => toast.error(err?.message || 'Erro ao excluir dados'),
+  });
+  const [confirmLgpd, setConfirmLgpd] = useState(false);
+  const [lgpdConfirmText, setLgpdConfirmText] = useState('');
+
+  const animalForm = useForm<AnimalFields>({
+    resolver: zodResolver(animalSchema),
+    defaultValues: { especie: 'cachorro' },
+  });
+
+  const { mutate: addAnimal, isPending: savingAnimal } = useMutation({
+    mutationFn: (d: AnimalFields) => api.post('/animals', { ...d, tutor_id: id }),
+    onSuccess: () => {
+      toast.success('Animal cadastrado!');
+      setAnimalModal(false);
+      animalForm.reset({ especie: 'cachorro' });
+      queryClient.invalidateQueries({ queryKey: ['tutor', id] });
+    },
+    onError: () => toast.error('Erro ao cadastrar animal'),
+  });
+
+  if (isLoading) return <div className="flex justify-center py-20"><Spinner size="lg" /></div>;
   if (!tutor) return <p style={{ color: 'var(--text-muted)' }}>Tutor não encontrado.</p>;
 
   return (
@@ -107,24 +141,22 @@ export default function TutorDetailPage() {
           <div className="flex-1">
             {editing
               ? (
-                <div className="flex flex-col gap-3">
-                  <Input label="Nome" value={form.nome || ''} onChange={e => setForm(f => ({ ...f, nome: e.target.value }))} />
-                  <PhoneInput label="Telefone" value={form.telefone || ''} onChange={v => setForm(f => ({ ...f, telefone: v }))} />
-                  <Input
-                    label="Email"
-                    type="email"
-                    inputMode="email"
-                    placeholder="nome@email.com"
-                    value={form.email || ''}
-                    onChange={e => setForm(f => ({ ...f, email: e.target.value }))}
-                    error={form.email && !isValidEmail(form.email) ? 'E-mail inválido' : undefined}
+                <form onSubmit={handleSubmit(d => saveTutor(d))} className="flex flex-col gap-3">
+                  <Input label="Nome" error={errors.nome?.message} {...register('nome')} />
+                  <Controller
+                    name="telefone"
+                    control={control}
+                    render={({ field }) => (
+                      <PhoneInput label="Telefone" value={field.value} onChange={field.onChange} error={errors.telefone?.message} />
+                    )}
                   />
-                  <Input label="Endereço" value={form.endereco || ''} onChange={e => setForm(f => ({ ...f, endereco: e.target.value }))} />
+                  <Input label="Email" type="email" inputMode="email" placeholder="nome@email.com" error={errors.email?.message} {...register('email')} />
+                  <Input label="Endereço" {...register('endereco')} />
                   <div className="flex gap-2">
-                    <Button size="sm" loading={saving} onClick={save}>{t('common.save')}</Button>
-                    <Button size="sm" variant="ghost" onClick={() => setEditing(false)}>{t('common.cancel')}</Button>
+                    <Button type="submit" size="sm" loading={saving}>{t('common.save')}</Button>
+                    <Button type="button" size="sm" variant="ghost" onClick={() => setEditing(false)}>{t('common.cancel')}</Button>
                   </div>
-                </div>
+                </form>
               )
               : (
                 <>
@@ -132,9 +164,10 @@ export default function TutorDetailPage() {
                   <p className="text-sm mt-1" style={{ color: 'var(--text-secondary)' }}>📞 {tutor.telefone}</p>
                   {tutor.email && <p className="text-sm" style={{ color: 'var(--text-secondary)' }}>✉️ {tutor.email}</p>}
                   {tutor.endereco && <p className="text-sm" style={{ color: 'var(--text-secondary)' }}>📍 {tutor.endereco}</p>}
-                  <div className="flex gap-2 mt-3">
-                    <Button size="sm" variant="outline" onClick={() => setEditing(true)}>{t('common.edit')}</Button>
+                  <div className="flex gap-2 mt-3 flex-wrap">
+                    <Button size="sm" variant="outline" onClick={startEditing}>{t('common.edit')}</Button>
                     <Button size="sm" variant="danger" onClick={() => setConfirmDelete(true)}>{t('common.delete')}</Button>
+                    <Button size="sm" variant="ghost" onClick={() => { setLgpdConfirmText(''); setConfirmLgpd(true); }} style={{ color: 'var(--color-danger)', fontSize: '0.7rem' }}>🗑 Excluir dados (LGPD)</Button>
                   </div>
                 </>
               )
@@ -189,9 +222,42 @@ export default function TutorDetailPage() {
         message="Tem certeza? Esta ação é irreversível."
         confirmLabel="Remover"
         loading={deleting}
-        onConfirm={deleteTutor}
+        onConfirm={() => deleteTutor()}
         onCancel={() => setConfirmDelete(false)}
       />
+
+      <Modal
+        open={confirmLgpd}
+        onClose={() => setConfirmLgpd(false)}
+        title="Excluir todos os dados (LGPD)"
+        footer={
+          <>
+            <Button variant="ghost" onClick={() => setConfirmLgpd(false)}>Cancelar</Button>
+            <Button
+              variant="danger"
+              loading={deletingAccount}
+              disabled={lgpdConfirmText !== 'EXCLUIR'}
+              onClick={() => deleteAccount()}
+            >
+              Excluir permanentemente
+            </Button>
+          </>
+        }
+      >
+        <div className="flex flex-col gap-4">
+          <div className="rounded-xl p-3 text-sm" style={{ background: '#FEE2E2', color: '#991B1B' }}>
+            <strong>Ação irreversível.</strong> Todos os dados do tutor, animais, reservas e contratos serão excluídos permanentemente em conformidade com a LGPD.
+          </div>
+          <div>
+            <p className="text-sm mb-2" style={{ color: 'var(--text-primary)' }}>Digite <strong>EXCLUIR</strong> para confirmar:</p>
+            <Input
+              value={lgpdConfirmText}
+              onChange={e => setLgpdConfirmText(e.target.value)}
+              placeholder="EXCLUIR"
+            />
+          </div>
+        </div>
+      </Modal>
 
       <Modal
         open={animalModal}
@@ -200,15 +266,15 @@ export default function TutorDetailPage() {
         footer={
           <>
             <Button variant="ghost" onClick={() => setAnimalModal(false)}>{t('common.cancel')}</Button>
-            <Button loading={savingAnimal} onClick={saveAnimal} disabled={!animalForm.nome.trim()}>{t('common.save')}</Button>
+            <Button loading={savingAnimal} onClick={animalForm.handleSubmit(d => addAnimal(d))}>{t('common.save')}</Button>
           </>
         }
       >
         <div className="flex flex-col gap-4">
           <Input
             label={t('animal.fields.name')}
-            value={animalForm.nome}
-            onChange={e => setAnimalForm(f => ({ ...f, nome: e.target.value }))}
+            error={animalForm.formState.errors.nome?.message}
+            {...animalForm.register('nome')}
           />
           <Select
             label={t('animal.fields.species')}
@@ -217,13 +283,12 @@ export default function TutorDetailPage() {
               { value: 'gato', label: '🐱 Gato' },
               { value: 'outro', label: '🐾 Outro' },
             ]}
-            value={animalForm.especie}
-            onChange={e => setAnimalForm(f => ({ ...f, especie: e.target.value }))}
+            value={animalForm.watch('especie')}
+            onChange={e => animalForm.setValue('especie', e.target.value as AnimalFields['especie'])}
           />
           <Input
             label={t('animal.fields.breed')}
-            value={animalForm.raca}
-            onChange={e => setAnimalForm(f => ({ ...f, raca: e.target.value }))}
+            {...animalForm.register('raca')}
           />
         </div>
       </Modal>

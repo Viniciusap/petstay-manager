@@ -10,7 +10,7 @@ interface Props {
   onSign?: () => void;
 }
 
-const SignatureCanvas = forwardRef<SignatureCanvasHandle, Props>(({ onSign }, ref) => {
+const SignatureCanvas = forwardRef<SignatureCanvasHandle | null, Props>(({ onSign }, ref) => {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const drawing = useRef(false);
   const lastPos = useRef({ x: 0, y: 0 });

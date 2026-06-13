@@ -7,6 +7,7 @@ const { readDb, getCollection, findById, insertOne, updateOne, deleteOne, findWh
 const { requireFields } = require('../middleware/validate');
 const { photoUploader } = require('../middleware/upload');
 const files = require('../utils/files');
+const { generateContractPdf } = require('../utils/pdfGenerator');
 
 function calcTotal(dataEntrada, dataSaida, valorDiaria, servicos = []) {
   const ms = new Date(dataSaida) - new Date(dataEntrada);
@@ -103,7 +104,6 @@ router.post('/', requireFields(['animal_id', 'tutor_id', 'data_entrada', 'data_s
       pdf_final_path: null,
     });
 
-    const { generateContractPdf } = require('../utils/pdfGenerator');
     generateContractPdf(contract.id, 'rascunho').catch(err =>
       console.error('Draft PDF error:', err.message)
     );
@@ -114,7 +114,14 @@ router.post('/', requireFields(['animal_id', 'tutor_id', 'data_entrada', 'data_s
 
 router.put('/:id', async (req, res, next) => {
   try {
-    const booking = await updateOne('bookings', req.params.id, req.body);
+    // Block fields managed by dedicated endpoints or that must not be reassigned after creation
+    const {
+      id: _id, created_at: _ca,
+      animal_id: _ai, tutor_id: _ti,
+      galeria: _g, galeria_token: _gt,
+      ...safe
+    } = req.body;
+    const booking = await updateOne('bookings', req.params.id, safe);
     if (!booking) return res.status(404).json({ success: false, error: 'Booking not found', code: 'NOT_FOUND' });
     res.json({ success: true, data: booking });
   } catch (err) { next(err); }
@@ -152,6 +159,12 @@ router.delete('/:id', async (req, res, next) => {
   try {
     const booking = await updateOne('bookings', req.params.id, { status_presenca: 'cancelado' });
     if (!booking) return res.status(404).json({ success: false, error: 'Booking not found', code: 'NOT_FOUND' });
+
+    // Cancel any pending/active contract — prevents tutor from signing after booking is cancelled
+    const contracts = await findWhere('contracts', { booking_id: req.params.id });
+    const active = contracts.find(c => c.status !== 'assinado' && c.status !== 'cancelado');
+    if (active) await updateOne('contracts', active.id, { status: 'cancelado' });
+
     res.json({ success: true, data: booking });
   } catch (err) { next(err); }
 });

@@ -1,0 +1,32 @@
+services:
+  api:
+    build: ./backend
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:3002:3002"
+    env_file: .env
+    volumes:
+      - petstay_data:/app/data
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "--tries=1", "http://127.0.0.1:3002/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+  admin:
+    build: ./frontend
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:8082:80"
+    depends_on:
+      api:
+        condition: service_healthy
+
+networks:
+  default:
+    external: true
+    name: arancia_network
+
+volumes:
+  petstay_data:

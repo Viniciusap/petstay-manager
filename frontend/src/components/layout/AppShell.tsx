@@ -3,7 +3,6 @@ import { Outlet } from 'react-router-dom';
 import Sidebar from './Sidebar';
 import ThemeToggle from '../ui/ThemeToggle';
 import LanguageToggle from '../ui/LanguageToggle';
-import ToastContainer from '../ui/Toast';
 
 export default function AppShell() {
   const [mobileOpen, setMobileOpen] = useState(false);
@@ -48,9 +47,15 @@ export default function AppShell() {
         <main className="flex-1 overflow-y-auto p-4 md:p-6">
           <Outlet />
         </main>
+
+        {/* Footer */}
+        <footer className="px-4 py-2 border-t text-center flex-shrink-0" style={{ borderColor: 'var(--border)' }}>
+          <a href="/privacidade" className="text-xs hover:underline" style={{ color: 'var(--text-muted)' }}>
+            Política de Privacidade
+          </a>
+        </footer>
       </div>
 
-      <ToastContainer />
     </div>
   );
 }

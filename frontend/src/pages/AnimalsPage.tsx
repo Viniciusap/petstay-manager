@@ -1,8 +1,12 @@
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { useForm } from 'react-hook-form';
+import { zodResolver } from '@hookform/resolvers/zod';
+import { z } from 'zod';
 import { useNavigate } from 'react-router-dom';
+import { toast } from 'sonner';
 import api from '../lib/api';
 import { useTranslation } from '../contexts/TranslationContext';
-import { useToast } from '../contexts/ToastContext';
 import Button from '../components/ui/Button';
 import Input from '../components/ui/Input';
 import Select from '../components/ui/Select';
@@ -12,48 +16,48 @@ import Spinner from '../components/ui/Spinner';
 import Avatar from '../components/ui/Avatar';
 import type { Animal, Tutor } from '../types';
 
-export default function AnimalsPage() {
+const animalSchema = z.object({
+  nome: z.string().min(1, 'Nome obrigatório'),
+  especie: z.enum(['cachorro', 'gato', 'outro']),
+  raca: z.string().optional(),
+  tutor_id: z.string().min(1, 'Tutor obrigatório'),
+});
+type AnimalFields = z.infer<typeof animalSchema>;
+
+export function AnimalsPage() {
   const { t } = useTranslation();
-  const { toast } = useToast();
   const navigate = useNavigate();
-  const [animals, setAnimals] = useState<Animal[]>([]);
-  const [tutors, setTutors] = useState<Tutor[]>([]);
-  const [loading, setLoading] = useState(true);
+  const queryClient = useQueryClient();
   const [search, setSearch] = useState('');
   const [modal, setModal] = useState(false);
-  const [saving, setSaving] = useState(false);
-  const [form, setForm] = useState({ nome: '', especie: 'cachorro', raca: '', tutor_id: '' });
-  const [errors, setErrors] = useState<Record<string, string>>({});
 
-  function load() {
-    setLoading(true);
-    api.get('/animals').then((r: any) => setAnimals(r.data)).finally(() => setLoading(false));
-  }
+  const { data: animals = [], isLoading } = useQuery({
+    queryKey: ['animals'],
+    queryFn: () => api.get<Animal[]>('/animals').then(r => r.data ?? []),
+  });
 
-  useEffect(() => {
-    load();
-    api.get('/tutors').then((r: any) => setTutors(r.data));
-  }, []);
+  const { data: tutors = [] } = useQuery({
+    queryKey: ['tutors', ''],
+    queryFn: () => api.get<Tutor[]>('/tutors').then(r => r.data ?? []),
+  });
 
-  const filtered = animals.filter(a =>
-    !search || a.nome.toLowerCase().includes(search.toLowerCase())
-  );
+  const filtered = animals.filter(a => !search || a.nome.toLowerCase().includes(search.toLowerCase()));
 
-  async function save() {
-    const e: Record<string, string> = {};
-    if (!form.nome) e.nome = t('errors.required');
-    if (!form.tutor_id) e.tutor_id = t('errors.required');
-    if (Object.keys(e).length) { setErrors(e); return; }
-    setSaving(true);
-    try {
-      await api.post('/animals', form);
-      toast('Animal cadastrado!');
+  const { register, handleSubmit, reset, watch, setValue, formState: { errors } } = useForm<AnimalFields>({
+    resolver: zodResolver(animalSchema),
+    defaultValues: { especie: 'cachorro' },
+  });
+
+  const { mutate: saveAnimal, isPending: saving } = useMutation({
+    mutationFn: (d: AnimalFields) => api.post('/animals', d),
+    onSuccess: () => {
+      toast.success('Animal cadastrado!');
       setModal(false);
-      setForm({ nome: '', especie: 'cachorro', raca: '', tutor_id: '' });
-      load();
-    } catch { toast('Erro ao cadastrar', 'error'); }
-    finally { setSaving(false); }
-  }
+      reset({ especie: 'cachorro' });
+      queryClient.invalidateQueries({ queryKey: ['animals'] });
+    },
+    onError: () => toast.error('Erro ao cadastrar'),
+  });
 
   return (
     <div className="flex flex-col gap-5">
@@ -64,7 +68,7 @@ export default function AnimalsPage() {
 
       <Input placeholder={t('common.search')} value={search} onChange={e => setSearch(e.target.value)} />
 
-      {loading
+      {isLoading
         ? <div className="flex justify-center py-16"><Spinner size="lg" /></div>
         : filtered.length === 0
           ? <EmptyState emoji="🐾" title={t('animal.noAnimals')} action={{ label: t('animal.new'), onClick: () => setModal(true) }} />
@@ -99,27 +103,26 @@ export default function AnimalsPage() {
         footer={
           <>
             <Button variant="ghost" onClick={() => setModal(false)}>{t('common.cancel')}</Button>
-            <Button loading={saving} onClick={save}>{t('common.save')}</Button>
+            <Button loading={saving} onClick={handleSubmit(d => saveAnimal(d))}>{t('common.save')}</Button>
           </>
         }
       >
         <div className="flex flex-col gap-4">
           <Select
             label={t('tutor.title')}
-            options={tutors.map(t2 => ({ value: t2.id, label: t2.nome }))}
-            placeholder="Selecione..."
-            value={form.tutor_id}
-            onChange={e => { setForm(f => ({ ...f, tutor_id: e.target.value })); setErrors(e2 => ({ ...e2, tutor_id: '' })); }}
-            error={errors.tutor_id}
+            options={[{ value: '', label: 'Selecione...' }, ...tutors.map(t2 => ({ value: t2.id, label: t2.nome }))]}
+            value={watch('tutor_id') ?? ''}
+            onChange={e => setValue('tutor_id', e.target.value, { shouldValidate: true })}
+            error={errors.tutor_id?.message}
           />
-          <Input label={t('animal.fields.name')} value={form.nome} onChange={e => { setForm(f => ({ ...f, nome: e.target.value })); setErrors(e2 => ({ ...e2, nome: '' })); }} error={errors.nome} />
+          <Input label={t('animal.fields.name')} error={errors.nome?.message} {...register('nome')} />
           <Select
             label={t('animal.fields.species')}
             options={[{ value: 'cachorro', label: '🐶 Cachorro' }, { value: 'gato', label: '🐱 Gato' }, { value: 'outro', label: '🐾 Outro' }]}
-            value={form.especie}
-            onChange={e => setForm(f => ({ ...f, especie: e.target.value }))}
+            value={watch('especie')}
+            onChange={e => setValue('especie', e.target.value as AnimalFields['especie'])}
           />
-          <Input label={t('animal.fields.breed')} value={form.raca} onChange={e => setForm(f => ({ ...f, raca: e.target.value }))} />
+          <Input label={t('animal.fields.breed')} {...register('raca')} />
         </div>
       </Modal>
     </div>

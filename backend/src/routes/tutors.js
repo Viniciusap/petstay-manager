@@ -38,7 +38,8 @@ router.post('/', requireFields(['nome', 'telefone']), async (req, res, next) => 
 
 router.put('/:id', async (req, res, next) => {
   try {
-    const tutor = await updateOne('tutors', req.params.id, req.body);
+    const { id: _id, created_at: _ca, ...safe } = req.body;
+    const tutor = await updateOne('tutors', req.params.id, safe);
     if (!tutor) return res.status(404).json({ success: false, error: 'Tutor not found', code: 'NOT_FOUND' });
     res.json({ success: true, data: tutor });
   } catch (err) { next(err); }
@@ -50,6 +51,10 @@ router.delete('/:id', async (req, res, next) => {
       .filter(b => !['cancelado', 'check-out'].includes(b.status_presenca));
     if (activeBookings.length > 0) {
       return res.status(409).json({ success: false, error: 'Tutor has active bookings', code: 'HAS_ACTIVE_BOOKINGS' });
+    }
+    const animals = await findWhere('animals', { tutor_id: req.params.id });
+    if (animals.length > 0) {
+      return res.status(409).json({ success: false, error: 'Tutor has registered animals', code: 'HAS_ANIMALS' });
     }
     const deleted = await deleteOne('tutors', req.params.id);
     if (!deleted) return res.status(404).json({ success: false, error: 'Tutor not found', code: 'NOT_FOUND' });

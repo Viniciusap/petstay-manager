@@ -24,7 +24,8 @@ router.post('/', requireFields(['nome', 'valor']), async (req, res, next) => {
 
 router.put('/:id', async (req, res, next) => {
   try {
-    const service = await updateOne('services', req.params.id, req.body);
+    const { id: _id, created_at: _ca, ...safe } = req.body;
+    const service = await updateOne('services', req.params.id, safe);
     if (!service) return res.status(404).json({ success: false, error: 'Service not found', code: 'NOT_FOUND' });
     res.json({ success: true, data: service });
   } catch (err) { next(err); }

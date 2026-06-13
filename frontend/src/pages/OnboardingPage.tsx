@@ -1,5 +1,7 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { useMutation } from '@tanstack/react-query';
+import { toast } from 'sonner';
 import api from '../lib/api';
 import { useTranslation } from '../contexts/TranslationContext';
 import { useTheme } from '../contexts/ThemeContext';
@@ -25,10 +27,9 @@ interface FormData {
   tema_padrao: 'light' | 'dark';
 }
 
-// ── Signature block reutilizável para o onboarding ───────────────────────────
 interface SigBlockProps {
   repName: string;
-  sigRef: React.RefObject<import('../components/signing/SignatureCanvas').SignatureCanvasHandle>;
+  sigRef: React.RefObject<SignatureCanvasHandle | null>;
   onNameChange: (v: string) => void;
 }
 
@@ -40,7 +41,6 @@ function OnboardingSignatureBlock({ repName, sigRef, onNameChange }: SigBlockPro
     const reader = new FileReader();
     reader.onload = e => setUploadPreview(e.target?.result as string);
     reader.readAsDataURL(file);
-    // Store file reference on sigRef via a side-channel: expose via a custom attribute
     (sigRef as any)._uploadedFile = file;
   }
 
@@ -60,7 +60,6 @@ function OnboardingSignatureBlock({ repName, sigRef, onNameChange }: SigBlockPro
         style={{ background: 'var(--bg-card)', color: 'var(--text-primary)', borderColor: 'var(--border)' }}
       />
 
-      {/* Mode tabs */}
       <div className="flex gap-1 p-1 rounded-xl self-start" style={{ background: 'var(--bg-hover)' }}>
         {(['draw', 'upload'] as const).map(m => (
           <button
@@ -108,12 +107,11 @@ function OnboardingSignatureBlock({ repName, sigRef, onNameChange }: SigBlockPro
   );
 }
 
-export default function OnboardingPage() {
+export function OnboardingPage() {
   const { t, setLang } = useTranslation();
   const { setTheme } = useTheme();
   const navigate = useNavigate();
   const [step, setStep] = useState(1);
-  const [saving, setSaving] = useState(false);
   const [done, setDone] = useState(false);
   const [errors, setErrors] = useState<Partial<Record<keyof FormData, string>>>({});
 
@@ -130,7 +128,7 @@ export default function OnboardingPage() {
     tema_padrao: 'light',
     nome_representante: '',
   });
-  const sigRef = useRef<SignatureCanvasHandle>(null);
+  const sigRef = useRef<SignatureCanvasHandle | null>(null);
 
   function set<K extends keyof FormData>(key: K, val: FormData[K]) {
     setForm(f => ({ ...f, [key]: val }));
@@ -153,10 +151,8 @@ export default function OnboardingPage() {
     setStep(s => s + 1);
   }
 
-  async function finish() {
-    if (!validate(3)) return;
-    setSaving(true);
-    try {
+  const { mutate: finish, isPending: saving } = useMutation({
+    mutationFn: async () => {
       await api.put('/settings', {
         nome_estabelecimento: form.nome_estabelecimento,
         cor_primaria: form.cor_primaria,
@@ -172,18 +168,14 @@ export default function OnboardingPage() {
       if (form.logo_file) {
         const fd = new FormData();
         fd.append('logo', form.logo_file);
-        try { await api.post('/settings/logo', fd); } catch {
-          console.warn('Logo upload failed, continuing without logo');
-        }
+        try { await api.post('/settings/logo', fd); } catch { /* non-fatal */ }
       }
 
-      // Save hotel signature (drawn or uploaded)
       if (form.nome_representante.trim()) {
         const uploadedFile = (sigRef as any)._uploadedFile as File | null;
         let sigBase64: string | null = null;
 
         if (uploadedFile) {
-          // Normalize uploaded image to PNG via canvas
           sigBase64 = await new Promise<string>((resolve) => {
             const reader = new FileReader();
             reader.onload = (e) => {
@@ -211,19 +203,21 @@ export default function OnboardingPage() {
               assinatura_base64: sigBase64,
               nome_representante: form.nome_representante.trim(),
             });
-          } catch { console.warn('Hotel signature save failed'); }
+          } catch { /* non-fatal */ }
         }
       }
-
+    },
+    onSuccess: () => {
       setLang(form.idioma_padrao);
       setTheme(form.tema_padrao);
       setDone(true);
-    } catch (err) {
-      console.error('Onboarding save failed', err);
-      // Keep saving=false so user can retry
-    } finally {
-      setSaving(false);
-    }
+    },
+    onError: () => toast.error('Erro ao salvar configurações. Tente novamente.'),
+  });
+
+  function handleFinish() {
+    if (!validate(3)) return;
+    finish();
   }
 
   function handleLogoFile(file: File) {
@@ -255,7 +249,6 @@ export default function OnboardingPage() {
   return (
     <div className="min-h-screen flex items-center justify-center p-6" style={{ background: 'var(--bg-base)' }}>
       <div className="w-full max-w-md">
-        {/* Header */}
         <div className="text-center mb-8">
           <p className="text-xs font-medium mb-2" style={{ color: 'var(--text-muted)' }}>🐾 PetStay Manager</p>
           <h1 className="text-2xl font-bold" style={{ fontFamily: 'Plus Jakarta Sans', color: 'var(--text-primary)' }}>
@@ -264,29 +257,21 @@ export default function OnboardingPage() {
           <p className="text-sm mt-2" style={{ color: 'var(--text-secondary)' }}>{t('onboarding.subtitle')}</p>
         </div>
 
-        {/* Step indicator */}
         <div className="flex items-center gap-2 mb-6">
           {[1, 2, 3].map(s => (
-            <div
-              key={s}
-              className="h-1.5 flex-1 rounded-full transition-all"
-              style={{ background: s <= step ? 'var(--color-primary)' : 'var(--border)' }}
-            />
+            <div key={s} className="h-1.5 flex-1 rounded-full transition-all" style={{ background: s <= step ? 'var(--color-primary)' : 'var(--border)' }} />
           ))}
         </div>
         <p className="text-xs text-center mb-6" style={{ color: 'var(--text-muted)' }}>
           {t('onboarding.step_of', { step: String(step), total: '3' })}
         </p>
 
-        {/* Card */}
         <div className="rounded-2xl shadow-sm p-6 flex flex-col gap-5" style={{ background: 'var(--bg-card)' }}>
           {step === 1 && (
             <>
               <h2 className="font-semibold" style={{ fontFamily: 'Plus Jakarta Sans', color: 'var(--text-primary)' }}>
                 {t('onboarding.step1_title')}
               </h2>
-
-              {/* Logo upload */}
               <div>
                 <p className="text-sm font-medium mb-2" style={{ color: 'var(--text-primary)' }}>{t('onboarding.logo_label')}</p>
                 {form.logo_preview
@@ -299,7 +284,6 @@ export default function OnboardingPage() {
                   : <FileUpload accept="image/png,image/jpeg,image/webp" maxMB={2} label={t('onboarding.logo_label')} hint={t('onboarding.logo_hint')} onFile={handleLogoFile} />
                 }
               </div>
-
               <Input
                 label={t('onboarding.hotel_name_label')}
                 placeholder={t('onboarding.hotel_name_placeholder')}
@@ -307,30 +291,15 @@ export default function OnboardingPage() {
                 onChange={e => set('nome_estabelecimento', e.target.value)}
                 error={errors.nome_estabelecimento}
               />
-
-              {/* Color picker */}
               <div>
                 <p className="text-sm font-medium mb-2" style={{ color: 'var(--text-primary)' }}>{t('onboarding.color_label')}</p>
                 <div className="flex items-center gap-2 flex-wrap">
                   {PRESET_COLORS.map(c => (
-                    <button
-                      key={c}
-                      className="w-8 h-8 rounded-full transition-transform hover:scale-110 border-2"
-                      style={{
-                        background: c,
-                        borderColor: form.cor_primaria === c ? '#000' : 'transparent',
-                      }}
-                      onClick={() => set('cor_primaria', c)}
-                    />
+                    <button key={c} className="w-8 h-8 rounded-full transition-transform hover:scale-110 border-2" style={{ background: c, borderColor: form.cor_primaria === c ? '#000' : 'transparent' }} onClick={() => set('cor_primaria', c)} />
                   ))}
                   <div className="flex items-center gap-2 ml-2">
                     <span className="text-xs" style={{ color: 'var(--text-muted)' }}>{t('onboarding.color_custom')}:</span>
-                    <input
-                      type="color"
-                      value={form.cor_primaria}
-                      onChange={e => set('cor_primaria', e.target.value)}
-                      className="w-8 h-8 rounded cursor-pointer border-0 p-0 bg-transparent"
-                    />
+                    <input type="color" value={form.cor_primaria} onChange={e => set('cor_primaria', e.target.value)} className="w-8 h-8 rounded cursor-pointer border-0 p-0 bg-transparent" />
                   </div>
                 </div>
               </div>
@@ -380,7 +349,6 @@ export default function OnboardingPage() {
                 value={form.diaria_base}
                 onChange={e => set('diaria_base', parseFloat(e.target.value) || 0)}
               />
-
               <div>
                 <p className="text-sm font-medium mb-2" style={{ color: 'var(--text-primary)' }}>{t('onboarding.lang_label')}</p>
                 <div className="flex gap-3">
@@ -392,7 +360,6 @@ export default function OnboardingPage() {
                   ))}
                 </div>
               </div>
-
               <div>
                 <p className="text-sm font-medium mb-2" style={{ color: 'var(--text-primary)' }}>{t('onboarding.theme_label')}</p>
                 <div className="flex gap-3">
@@ -404,15 +371,7 @@ export default function OnboardingPage() {
                   ))}
                 </div>
               </div>
-
-              {/* Hotel signature */}
-              <OnboardingSignatureBlock
-                repName={form.nome_representante}
-                sigRef={sigRef}
-                onNameChange={v => set('nome_representante', v)}
-              />
-
-              {/* Preview */}
+              <OnboardingSignatureBlock repName={form.nome_representante} sigRef={sigRef} onNameChange={v => set('nome_representante', v)} />
               <div className="rounded-xl border p-3" style={{ borderColor: 'var(--border)' }}>
                 <p className="text-xs font-medium mb-2" style={{ color: 'var(--text-muted)' }}>{t('onboarding.preview_label')}</p>
                 <div className="flex items-center gap-3">
@@ -421,9 +380,7 @@ export default function OnboardingPage() {
                     : <div className="h-10 w-10 rounded-lg flex items-center justify-center text-xl" style={{ background: 'var(--bg-hover)' }}>🐾</div>
                   }
                   <div>
-                    <p className="text-sm font-bold" style={{ color: form.cor_primaria }}>
-                      {form.nome_estabelecimento || 'Meu Hotel'}
-                    </p>
+                    <p className="text-sm font-bold" style={{ color: form.cor_primaria }}>{form.nome_estabelecimento || 'Meu Hotel'}</p>
                     <div className="h-1 w-24 rounded-full mt-1" style={{ background: form.cor_primaria }} />
                   </div>
                 </div>
@@ -431,7 +388,6 @@ export default function OnboardingPage() {
             </>
           )}
 
-          {/* Navigation */}
           <div className="flex justify-between mt-2">
             {step > 1
               ? <Button variant="ghost" onClick={() => setStep(s => s - 1)}>{t('common.back')}</Button>
@@ -439,7 +395,7 @@ export default function OnboardingPage() {
             }
             {step < 3
               ? <Button onClick={next}>{t('common.next')} →</Button>
-              : <Button onClick={finish} loading={saving}>{t('onboarding.finish_button')}</Button>
+              : <Button onClick={handleFinish} loading={saving}>{t('onboarding.finish_button')}</Button>
             }
           </div>
         </div>

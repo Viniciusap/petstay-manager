@@ -9,6 +9,7 @@ const { ensureDb, DATA_DIR } = require('./utils/db');
 const { autoBackup } = require('./utils/backup');
 const { adapter } = require('./utils/storage');
 const { runMigrations, APP_VERSION } = require('./migrations');
+const cookieParser = require('cookie-parser');
 const errorHandler = require('./middleware/errorHandler');
 
 const requireAuth = require('./middleware/requireAuth');
@@ -90,7 +91,8 @@ async function createApp() {
     app.set('trust proxy', parseInt(process.env.TRUST_PROXY, 10) || 1);
   }
 
-  app.use(express.json({ limit: '1mb' }));
+  app.use(express.json({ limit: '4mb' }));
+  app.use(cookieParser());
 
   if (adapter === 'local' && DATA_DIR) {
     app.use('/uploads', express.static(path.join(DATA_DIR, 'uploads')));

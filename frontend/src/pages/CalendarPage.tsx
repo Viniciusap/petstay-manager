@@ -1,7 +1,8 @@
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { toast } from 'sonner';
 import api from '../lib/api';
 import { useTranslation } from '../contexts/TranslationContext';
-import { useToast } from '../contexts/ToastContext';
 import Button from '../components/ui/Button';
 import Drawer from '../components/ui/Drawer';
 import Input from '../components/ui/Input';
@@ -20,28 +21,48 @@ function toYYYYMMDD(year: number, month: number, day: number) {
   return `${year}-${String(month + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
 }
 
-export default function CalendarPage() {
+interface CalendarData { bookings: Booking[]; blocked: BlockedDate[] }
+
+export function CalendarPage() {
   const { t } = useTranslation();
-  const { toast } = useToast();
+  const queryClient = useQueryClient();
   const now = new Date();
   const [year, setYear] = useState(now.getFullYear());
   const [month, setMonth] = useState(now.getMonth());
-  const [bookings, setBookings] = useState<Booking[]>([]);
-  const [blocked, setBlocked] = useState<BlockedDate[]>([]);
-  const [loading, setLoading] = useState(true);
   const [drawerDay, setDrawerDay] = useState<string | null>(null);
   const [blockReason, setBlockReason] = useState('');
-  const [blocking, setBlocking] = useState(false);
 
-  function load() {
-    setLoading(true);
-    api.get(`/bookings/calendar?mes=${toYYYYMM(year, month)}`).then((r: any) => {
-      setBookings(r.data.bookings || []);
-      setBlocked(r.data.blocked || []);
-    }).finally(() => setLoading(false));
-  }
+  const { data, isLoading } = useQuery({
+    queryKey: ['calendar', year, month],
+    queryFn: () => api.get<CalendarData>(`/bookings/calendar?mes=${toYYYYMM(year, month)}`).then(r => r.data ?? { bookings: [], blocked: [] }),
+  });
 
-  useEffect(() => { load(); }, [year, month]);
+  const bookings = data?.bookings ?? [];
+  const blocked = data?.blocked ?? [];
+
+  const { mutate: blockDay, isPending: blocking } = useMutation({
+    mutationFn: () => api.post('/dates/blocked', { data: drawerDay, motivo: blockReason }),
+    onSuccess: () => {
+      toast.success('Dia bloqueado!');
+      setBlockReason('');
+      queryClient.invalidateQueries({ queryKey: ['calendar', year, month] });
+    },
+    onError: () => toast.error('Erro'),
+  });
+
+  const { mutate: unblockDay } = useMutation({
+    mutationFn: () => {
+      const entry = blocked.find(b => b.data === drawerDay);
+      if (!entry) throw new Error('Not found');
+      return api.delete(`/dates/blocked/${entry.id}`);
+    },
+    onSuccess: () => {
+      toast.success('Desbloqueado!');
+      setDrawerDay(null);
+      queryClient.invalidateQueries({ queryKey: ['calendar', year, month] });
+    },
+    onError: () => toast.error('Erro'),
+  });
 
   function prev() { if (month === 0) { setMonth(11); setYear(y => y - 1); } else setMonth(m => m - 1); }
   function next() { if (month === 11) { setMonth(0); setYear(y => y + 1); } else setMonth(m => m + 1); }
@@ -71,26 +92,6 @@ export default function CalendarPage() {
   const dayBookings = drawerDay ? bookings.filter(b => b.data_entrada <= drawerDay && b.data_saida >= drawerDay) : [];
   const dayBlockedEntry = drawerDay ? blocked.find(b => b.data === drawerDay) : undefined;
 
-  async function blockDay() {
-    if (!drawerDay) return;
-    setBlocking(true);
-    try {
-      await api.post('/dates/blocked', { data: drawerDay, motivo: blockReason });
-      toast('Dia bloqueado!');
-      setBlockReason('');
-      load();
-    } catch { toast('Erro', 'error'); }
-    finally { setBlocking(false); }
-  }
-
-  async function unblockDay() {
-    if (!dayBlockedEntry) return;
-    await api.delete(`/dates/blocked/${dayBlockedEntry.id}`);
-    toast('Desbloqueado!');
-    load();
-    setDrawerDay(null);
-  }
-
   return (
     <div className="flex flex-col gap-5">
       <div className="flex items-center justify-between">
@@ -102,7 +103,6 @@ export default function CalendarPage() {
         </div>
       </div>
 
-      {/* Legend */}
       <div className="flex gap-4 text-xs flex-wrap">
         {[
           { bg: 'transparent', color: 'var(--text-primary)', label: t('calendar.available') },
@@ -117,7 +117,7 @@ export default function CalendarPage() {
         ))}
       </div>
 
-      {loading
+      {isLoading
         ? <div className="flex justify-center py-16"><Spinner size="lg" /></div>
         : (
           <div>
@@ -155,14 +155,14 @@ export default function CalendarPage() {
               <div>
                 <Badge variant="error">Bloqueado</Badge>
                 {dayBlockedEntry.motivo && <p className="text-sm mt-2" style={{ color: 'var(--text-secondary)' }}>{dayBlockedEntry.motivo}</p>}
-                <Button className="mt-3 w-full" variant="secondary" onClick={unblockDay}>{t('calendar.unblock')}</Button>
+                <Button className="mt-3 w-full" variant="secondary" onClick={() => unblockDay()}>{t('calendar.unblock')}</Button>
               </div>
             )
             : (
               <div className="flex flex-col gap-2">
                 <p className="text-sm font-medium" style={{ color: 'var(--text-primary)' }}>{t('calendar.block_day')}</p>
                 <Input placeholder={t('calendar.reason')} value={blockReason} onChange={e => setBlockReason(e.target.value)} />
-                <Button loading={blocking} onClick={blockDay} className="w-full">{t('calendar.block_day')}</Button>
+                <Button loading={blocking} onClick={() => blockDay()} className="w-full">{t('calendar.block_day')}</Button>
               </div>
             )
           }

@@ -1,5 +1,5 @@
 module.exports = async function migrate_v1_0_0(readDb, writeDb) {
-  const db = readDb();
+  const db = await readDb();
 
   if (!db.tutors) db.tutors = [];
   if (!db.animals) db.animals = [];

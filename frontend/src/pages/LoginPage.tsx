@@ -1,54 +1,112 @@
-import { useState, useEffect } from 'react';
+import { useState } from 'react';
+import { useQuery, useMutation } from '@tanstack/react-query';
+import { useForm } from 'react-hook-form';
+import { zodResolver } from '@hookform/resolvers/zod';
+import { z } from 'zod';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import Button from '../components/ui/Button';
 import Input from '../components/ui/Input';
 import Spinner from '../components/ui/Spinner';
-import api from '../lib/api';
+import api, { ApiError } from '../lib/api';
 
-type Mode = 'loading' | 'login' | 'first-setup' | 'no-setup-token' | 'done';
+type Mode = 'login' | 'first-setup' | 'no-setup-token';
 
-export default function LoginPage() {
-  const { login } = useAuth();
+const schema = z.object({
+  senha: z.string().min(1, 'Digite sua senha'),
+  setupToken: z.string().optional(),
+});
+type Fields = z.infer<typeof schema>;
+
+const mfaSchema = z.object({ token: z.string().length(6, 'Código deve ter 6 dígitos') });
+type MfaFields = z.infer<typeof mfaSchema>;
+
+export function LoginPage() {
+  const { login, completeMfa } = useAuth();
   const navigate = useNavigate();
   const location = useLocation();
-  const [mode, setMode] = useState<Mode>('loading');
-  const [senha, setSenha] = useState('');
-  const [setupToken, setSetupToken] = useState('');
-  const [error, setError] = useState('');
-  const [loading, setLoading] = useState(false);
+  const from = (location.state as { from?: { pathname: string } } | null)?.from?.pathname ?? '/';
+  const [mfaRequired, setMfaRequired] = useState(false);
 
-  const from = (location.state as any)?.from?.pathname || '/';
+  const { data: statusRes, isLoading: statusLoading } = useQuery({
+    queryKey: ['auth-status'],
+    queryFn: () => api.get<{ hasPassword: boolean; setupConfigured: boolean }>('/auth/status'),
+    retry: false,
+  });
 
-  useEffect(() => {
-    api.get('/auth/status').then((res: any) => {
-      if (res.data.hasPassword) setMode('login');
-      else if (res.data.setupConfigured) setMode('first-setup');
-      else setMode('no-setup-token');
-    }).catch(() => setMode('login'));
-  }, []);
+  const s = statusRes?.data;
+  const mode: Mode = !s
+    ? 'login'
+    : s.hasPassword
+      ? 'login'
+      : s.setupConfigured
+        ? 'first-setup'
+        : 'no-setup-token';
 
-  async function handleSubmit(e: React.FormEvent) {
-    e.preventDefault();
-    if (!senha) { setError('Digite sua senha'); return; }
-    if (mode === 'first-setup' && !setupToken) { setError('Digite o token de configuração'); return; }
-    setLoading(true);
-    setError('');
-    try {
-      await login(senha, mode === 'first-setup' ? setupToken : undefined);
+  const { register, handleSubmit, setError, formState: { errors } } = useForm<Fields>({
+    resolver: zodResolver(schema),
+    shouldUnregister: true,
+  });
+
+  const { mutate: doLogin, isPending, error: loginError } = useMutation({
+    mutationFn: (d: Fields) => login(d.senha, d.setupToken),
+    onSuccess: (result) => {
+      if (result.mfa_required) { setMfaRequired(true); return; }
       navigate(from, { replace: true });
-    } catch (err: any) {
-      const code = err?.code;
-      if (code === 'INVALID_SETUP_TOKEN') setError('Token de configuração inválido');
-      else if (code === 'INVALID_PASSWORD') setError('Senha incorreta');
-      else if (code === 'PASSWORD_TOO_SHORT') setError('Senha precisa ter ao menos 8 caracteres');
-      else setError(err?.error || 'Erro ao entrar');
-    } finally {
-      setLoading(false);
+    },
+  });
+
+  const mfaForm = useForm<MfaFields>({ resolver: zodResolver(mfaSchema) });
+
+  const { mutate: doMfa, isPending: mfaPending, error: mfaError } = useMutation({
+    mutationFn: (d: MfaFields) => completeMfa(d.token),
+    onSuccess: () => navigate(from, { replace: true }),
+  });
+
+  function onSubmit(d: Fields) {
+    if (mode === 'first-setup' && !d.setupToken?.trim()) {
+      setError('setupToken', { message: 'Digite o token de configuração' });
+      return;
     }
+    doLogin(d);
   }
 
-  if (mode === 'loading') {
+  // MFA step
+  if (mfaRequired) {
+    const mfaErr = mfaError as ApiError | null;
+    return (
+      <div className="min-h-screen flex items-center justify-center p-6" style={{ background: 'var(--bg-base)' }}>
+        <div className="w-full max-w-sm">
+          <div className="text-center mb-8">
+            <div className="text-5xl mb-4">🔐</div>
+            <h1 className="text-2xl font-bold" style={{ fontFamily: 'Plus Jakarta Sans', color: 'var(--text-primary)' }}>Autenticação em 2 fatores</h1>
+            <p className="text-sm mt-1" style={{ color: 'var(--text-secondary)' }}>Digite o código do seu aplicativo autenticador</p>
+          </div>
+          <form onSubmit={mfaForm.handleSubmit(d => doMfa(d))} className="rounded-2xl p-6 space-y-4" style={{ background: 'var(--bg-card)', border: '1px solid var(--border)' }}>
+            <Input
+              label="Código TOTP (6 dígitos)"
+              type="text"
+              inputMode="numeric"
+              maxLength={6}
+              placeholder="000000"
+              autoFocus
+              error={mfaForm.formState.errors.token?.message}
+              {...mfaForm.register('token')}
+            />
+            {mfaErr && <p className="text-sm text-red-500">{mfaErr.code === 'INVALID_TOTP' ? 'Código inválido' : mfaErr.message}</p>}
+            <Button type="submit" className="w-full" disabled={mfaPending}>
+              {mfaPending ? 'Verificando...' : 'Confirmar'}
+            </Button>
+            <button type="button" className="w-full text-xs underline" style={{ color: 'var(--text-muted)' }} onClick={() => setMfaRequired(false)}>
+              ← Voltar ao login
+            </button>
+          </form>
+        </div>
+      </div>
+    );
+  }
+
+  if (statusLoading) {
     return (
       <div className="min-h-screen flex items-center justify-center" style={{ background: 'var(--bg-base)' }}>
         <Spinner size="lg" />
@@ -63,15 +121,25 @@ export default function LoginPage() {
           <div className="text-3xl text-center">⚙️</div>
           <h2 className="font-bold text-center" style={{ color: 'var(--text-primary)' }}>Configuração necessária</h2>
           <p className="text-sm" style={{ color: 'var(--text-secondary)' }}>
-            O sistema ainda não tem uma senha definida e a variável <code className="font-mono text-xs px-1 rounded" style={{ background: 'var(--bg-hover)' }}>SETUP_TOKEN</code> não está configurada no servidor.
+            O sistema ainda não tem uma senha definida e a variável{' '}
+            <code className="font-mono text-xs px-1 rounded" style={{ background: 'var(--bg-hover)' }}>SETUP_TOKEN</code>{' '}
+            não está configurada no servidor.
           </p>
           <p className="text-sm" style={{ color: 'var(--text-secondary)' }}>
-            Adicione <code className="font-mono text-xs px-1 rounded" style={{ background: 'var(--bg-hover)' }}>SETUP_TOKEN=sua-chave-secreta</code> nas variáveis de ambiente e reinicie o servidor.
+            Adicione{' '}
+            <code className="font-mono text-xs px-1 rounded" style={{ background: 'var(--bg-hover)' }}>SETUP_TOKEN=sua-chave-secreta</code>{' '}
+            nas variáveis de ambiente e reinicie o servidor.
           </p>
         </div>
       </div>
     );
   }
+
+  const err = loginError as ApiError | null;
+  const errMsg = err?.code === 'INVALID_SETUP_TOKEN' ? 'Token de configuração inválido'
+    : err?.code === 'INVALID_PASSWORD' ? 'Senha incorreta'
+    : err?.code === 'PASSWORD_TOO_SHORT' ? 'Senha precisa ter ao menos 8 caracteres'
+    : err ? err.message : '';
 
   return (
     <div className="min-h-screen flex items-center justify-center p-6" style={{ background: 'var(--bg-base)' }}>
@@ -86,7 +154,7 @@ export default function LoginPage() {
           </p>
         </div>
 
-        <form onSubmit={handleSubmit} className="rounded-2xl p-6 space-y-4" style={{ background: 'var(--bg-card)', border: '1px solid var(--border)' }}>
+        <form onSubmit={handleSubmit(onSubmit)} className="rounded-2xl p-6 space-y-4" style={{ background: 'var(--bg-card)', border: '1px solid var(--border)' }}>
           {mode === 'first-setup' && (
             <>
               <div className="rounded-xl p-3 text-sm" style={{ background: 'var(--bg-hover)', color: 'var(--text-secondary)' }}>
@@ -95,10 +163,10 @@ export default function LoginPage() {
               <Input
                 label="Token de configuração (SETUP_TOKEN)"
                 type="password"
-                value={setupToken}
-                onChange={e => { setSetupToken(e.target.value); setError(''); }}
                 placeholder="Cole o valor de SETUP_TOKEN"
                 autoFocus
+                error={errors.setupToken?.message}
+                {...register('setupToken')}
               />
             </>
           )}
@@ -106,16 +174,16 @@ export default function LoginPage() {
           <Input
             label={mode === 'first-setup' ? 'Nova senha (mín. 8 caracteres)' : 'Senha'}
             type="password"
-            value={senha}
-            onChange={e => { setSenha(e.target.value); setError(''); }}
             placeholder="••••••••"
             autoFocus={mode === 'login'}
+            error={errors.senha?.message}
+            {...register('senha')}
           />
 
-          {error && <p className="text-sm text-red-500">{error}</p>}
+          {errMsg && <p className="text-sm text-red-500">{errMsg}</p>}
 
-          <Button type="submit" className="w-full" disabled={loading}>
-            {loading ? 'Entrando...' : mode === 'first-setup' ? 'Definir senha e entrar' : 'Entrar'}
+          <Button type="submit" className="w-full" disabled={isPending}>
+            {isPending ? 'Entrando...' : mode === 'first-setup' ? 'Definir senha e entrar' : 'Entrar'}
           </Button>
         </form>
       </div>

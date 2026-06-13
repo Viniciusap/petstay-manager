@@ -1,8 +1,8 @@
-import { useEffect, useState } from 'react';
+import { useQuery } from '@tanstack/react-query';
 import { useNavigate } from 'react-router-dom';
+import { toast } from 'sonner';
 import api from '../lib/api';
 import { useTranslation } from '../contexts/TranslationContext';
-import { useToast } from '../contexts/ToastContext';
 import Card from '../components/ui/Card';
 import Badge from '../components/ui/Badge';
 import Button from '../components/ui/Button';
@@ -18,18 +18,6 @@ function fmtBRL(v: number) {
   return `R$ ${v.toFixed(2).replace('.', ',')}`;
 }
 
-interface DashData {
-  bookings: Booking[];
-  settings: Settings;
-}
-
-function contractStatusVariant(s: string) {
-  if (s === 'assinado') return 'success';
-  if (s === 'expirado') return 'error';
-  if (s === 'visualizado') return 'info';
-  return 'pending';
-}
-
 function presenceVariant(s: string) {
   if (s === 'check-in') return 'success';
   if (s === 'check-out') return 'neutral';
@@ -37,27 +25,26 @@ function presenceVariant(s: string) {
   return 'pending';
 }
 
-export default function DashboardPage() {
+export function DashboardPage() {
   const { t } = useTranslation();
-  const { toast } = useToast();
   const navigate = useNavigate();
-  const [data, setData] = useState<DashData | null>(null);
-  const [loading, setLoading] = useState(true);
 
-  useEffect(() => {
-    Promise.all([
-      api.get('/bookings'),
-      api.get('/settings'),
-    ]).then(([bRes, sRes]: any[]) => {
-      setData({ bookings: bRes.data, settings: sRes.data });
-    }).finally(() => setLoading(false));
-  }, []);
+  const { data, isLoading } = useQuery({
+    queryKey: ['dashboard'],
+    queryFn: async () => {
+      const [bRes, sRes] = await Promise.all([
+        api.get<Booking[]>('/bookings'),
+        api.get<Settings>('/settings'),
+      ]);
+      return { bookings: bRes.data ?? [], settings: sRes.data ?? null as Settings | null };
+    },
+  });
 
-  if (loading) {
+  if (isLoading) {
     return <div className="flex justify-center py-20"><Spinner size="lg" /></div>;
   }
 
-  const bookings = data?.bookings || [];
+  const bookings = data?.bookings ?? [];
   const settings = data?.settings;
   const today = new Date().toISOString().slice(0, 10);
 
@@ -81,7 +68,7 @@ export default function DashboardPage() {
     if (!contract) return '#';
     const url = `${settings?.base_url}/assinar?t=${contract.token_unico}`;
     const text = encodeURIComponent(
-      `Olá! 🐾\nO contrato de hospedagem de *${(b as any).animal?.nome || ''}* está pronto para assinatura digital.\n\n📋 *Resumo:*\n• Check-in: ${fmtDate(b.data_entrada)}\n• Check-out: ${fmtDate(b.data_saida)}\n• Valor total: ${fmtBRL(b.valor_total)}\n\nAcesse o link para assinar:\n${url}\n\n— ${settings?.nome_estabelecimento || 'PetStay'}`
+      `Olá! 🐾\nO contrato de hospedagem de *${b.animal?.nome || ''}* está pronto para assinatura digital.\n\n📋 *Resumo:*\n• Check-in: ${fmtDate(b.data_entrada)}\n• Check-out: ${fmtDate(b.data_saida)}\n• Valor total: ${fmtBRL(b.valor_total)}\n\nAcesse o link para assinar:\n${url}\n\n— ${settings?.nome_estabelecimento || 'PetStay'}`
     );
     return `https://wa.me/${b.tutor?.telefone?.replace(/\D/g, '')}?text=${text}`;
   }
@@ -89,7 +76,7 @@ export default function DashboardPage() {
   function copyLink(b: Booking, contract: Contract | undefined) {
     if (!contract) return;
     const url = `${settings?.base_url}/assinar?t=${contract.token_unico}`;
-    navigator.clipboard.writeText(url).then(() => toast(t('common.linkCopied')));
+    navigator.clipboard.writeText(url).then(() => toast.success(t('common.linkCopied')));
   }
 
   return (
@@ -118,10 +105,10 @@ export default function DashboardPage() {
               {active.map(b => (
                 <Card key={b.id} variant="bordered" className="cursor-pointer hover:shadow-md transition-shadow" onClick={() => navigate(`/bookings/${b.id}`)}>
                   <div className="flex items-center gap-3">
-                    <Avatar species={(b as any).animal?.especie} />
+                    <Avatar species={b.animal?.especie} />
                     <div className="flex-1 min-w-0">
-                      <p className="font-semibold text-sm truncate" style={{ color: 'var(--text-primary)' }}>{(b as any).animal?.nome || '—'}</p>
-                      <p className="text-xs truncate" style={{ color: 'var(--text-secondary)' }}>{(b as any).tutor?.nome || '—'}</p>
+                      <p className="font-semibold text-sm truncate" style={{ color: 'var(--text-primary)' }}>{b.animal?.nome || '—'}</p>
+                      <p className="text-xs truncate" style={{ color: 'var(--text-secondary)' }}>{b.tutor?.nome || '—'}</p>
                     </div>
                     <div className="text-right">
                       <p className="text-xs" style={{ color: 'var(--text-muted)' }}>Saída</p>
@@ -146,7 +133,7 @@ export default function DashboardPage() {
                 <div key={b.id} className="flex items-center gap-3 p-3 rounded-xl border" style={{ borderColor: 'var(--border)', background: 'var(--bg-card)' }}>
                   <span className="text-lg">📥</span>
                   <div className="flex-1">
-                    <p className="text-sm font-medium" style={{ color: 'var(--text-primary)' }}>{(b as any).animal?.nome} — {(b as any).tutor?.nome}</p>
+                    <p className="text-sm font-medium" style={{ color: 'var(--text-primary)' }}>{b.animal?.nome} — {b.tutor?.nome}</p>
                   </div>
                   <Badge variant="info">Check-in</Badge>
                 </div>
@@ -155,7 +142,7 @@ export default function DashboardPage() {
                 <div key={b.id} className="flex items-center gap-3 p-3 rounded-xl border" style={{ borderColor: 'var(--border)', background: 'var(--bg-card)' }}>
                   <span className="text-lg">📤</span>
                   <div className="flex-1">
-                    <p className="text-sm font-medium" style={{ color: 'var(--text-primary)' }}>{(b as any).animal?.nome} — {(b as any).tutor?.nome}</p>
+                    <p className="text-sm font-medium" style={{ color: 'var(--text-primary)' }}>{b.animal?.nome} — {b.tutor?.nome}</p>
                   </div>
                   <Badge variant="warning">Check-out</Badge>
                 </div>
@@ -171,10 +158,15 @@ export default function DashboardPage() {
           <h2 className="text-base font-semibold mb-3" style={{ color: 'var(--text-primary)' }}>{t('dashboard.upcoming')}</h2>
           <div className="flex flex-col gap-2">
             {upcoming.slice(0, 5).map(b => (
-              <div key={b.id} className="flex items-center gap-3 p-3 rounded-xl border cursor-pointer hover:bg-[var(--bg-hover)] transition-colors" style={{ borderColor: 'var(--border)', background: 'var(--bg-card)' }} onClick={() => navigate(`/bookings/${b.id}`)}>
-                <Avatar species={(b as any).animal?.especie} size="sm" />
+              <div
+                key={b.id}
+                className="flex items-center gap-3 p-3 rounded-xl border cursor-pointer hover:bg-[var(--bg-hover)] transition-colors"
+                style={{ borderColor: 'var(--border)', background: 'var(--bg-card)' }}
+                onClick={() => navigate(`/bookings/${b.id}`)}
+              >
+                <Avatar species={b.animal?.especie} size="sm" />
                 <div className="flex-1 min-w-0">
-                  <p className="text-sm font-medium truncate" style={{ color: 'var(--text-primary)' }}>{(b as any).animal?.nome}</p>
+                  <p className="text-sm font-medium truncate" style={{ color: 'var(--text-primary)' }}>{b.animal?.nome}</p>
                   <p className="text-xs" style={{ color: 'var(--text-secondary)' }}>{fmtDate(b.data_entrada)} → {fmtDate(b.data_saida)}</p>
                 </div>
                 <p className="text-sm font-semibold flex-shrink-0" style={{ color: 'var(--color-primary)' }}>{fmtBRL(b.valor_total)}</p>

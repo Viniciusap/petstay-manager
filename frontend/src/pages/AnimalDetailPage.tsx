@@ -1,13 +1,16 @@
-import { useEffect, useState, useRef } from 'react';
+import { useRef, useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import api from '../lib/api';
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { useForm } from 'react-hook-form';
+import { zodResolver } from '@hookform/resolvers/zod';
+import { z } from 'zod';
+import { toast } from 'sonner';
+import api, { resolveFileUrl } from '../lib/api';
 import { useTranslation } from '../contexts/TranslationContext';
-import { useToast } from '../contexts/ToastContext';
 import Button from '../components/ui/Button';
 import Input from '../components/ui/Input';
 import Textarea from '../components/ui/Textarea';
 import Card from '../components/ui/Card';
-import Badge from '../components/ui/Badge';
 import FileUpload from '../components/ui/FileUpload';
 import Spinner from '../components/ui/Spinner';
 import Avatar from '../components/ui/Avatar';
@@ -16,114 +19,118 @@ import type { Animal, Booking } from '../types';
 function fmtDate(iso: string) { return new Date(iso).toLocaleDateString('pt-BR'); }
 function fmtBRL(v: number) { return `R$ ${v.toFixed(2).replace('.', ',')}`; }
 
-export default function AnimalDetailPage() {
+const editSchema = z.object({
+  nome: z.string().min(1, 'Nome obrigatório'),
+  observacoes: z.string().optional(),
+});
+type EditFields = z.infer<typeof editSchema>;
+
+interface AnimalWithBookings extends Animal { bookings: Booking[] }
+
+export function AnimalDetailPage() {
   const { id } = useParams<{ id: string }>();
   const { t } = useTranslation();
-  const { toast } = useToast();
   const navigate = useNavigate();
-  const [animal, setAnimal] = useState<Animal | null>(null);
-  const [bookings, setBookings] = useState<Booking[]>([]);
-  const [loading, setLoading] = useState(true);
+  const queryClient = useQueryClient();
+  const fotoInputRef = useRef<HTMLInputElement>(null);
   const [editing, setEditing] = useState(false);
-  const [saving, setSaving] = useState(false);
-  const [form, setForm] = useState<Partial<Animal>>({});
   const [newVacina, setNewVacina] = useState('');
   const [newAlergia, setNewAlergia] = useState('');
-  const [uploading, setUploading] = useState(false);
-  const [uploadingFoto, setUploadingFoto] = useState(false);
-  const fotoInputRef = useRef<HTMLInputElement>(null);
 
-  function load() {
-    api.get(`/animals/${id}`).then((r: any) => {
-      setAnimal(r.data);
-      setBookings(r.data.bookings || []);
-      setForm(r.data);
-    }).finally(() => setLoading(false));
+  const { data: animal, isLoading } = useQuery({
+    queryKey: ['animal', id],
+    queryFn: () => api.get<AnimalWithBookings>(`/animals/${id}`).then(r => r.data!),
+  });
+
+  const { register, handleSubmit, reset, formState: { errors } } = useForm<EditFields>({
+    resolver: zodResolver(editSchema),
+  });
+
+  function startEditing() {
+    if (!animal) return;
+    reset({ nome: animal.nome, observacoes: animal.saude?.observacoes || '' });
+    setEditing(true);
   }
 
-  useEffect(() => { load(); }, [id]);
-
-  async function save() {
-    setSaving(true);
-    try {
-      await api.put(`/animals/${id}`, form);
-      toast('Salvo!');
-      setEditing(false);
-      load();
-    } catch { toast('Erro', 'error'); }
-    finally { setSaving(false); }
+  function invalidate() {
+    queryClient.invalidateQueries({ queryKey: ['animal', id] });
   }
 
-  async function addVacina() {
+  const { mutate: saveAnimal, isPending: saving } = useMutation({
+    mutationFn: (d: EditFields) => api.put(`/animals/${id}`, { nome: d.nome, saude: { ...animal?.saude, observacoes: d.observacoes } }),
+    onSuccess: () => { toast.success('Salvo!'); setEditing(false); invalidate(); },
+    onError: () => toast.error('Erro'),
+  });
+
+  const { mutate: uploadFoto, isPending: uploadingFoto } = useMutation({
+    mutationFn: (file: File) => {
+      const fd = new FormData();
+      fd.append('foto', file);
+      return api.post(`/animals/${id}/foto`, fd);
+    },
+    onSuccess: () => { toast.success('Foto atualizada!'); invalidate(); },
+    onError: () => toast.error('Erro no upload'),
+  });
+
+  const { mutate: removeFoto } = useMutation({
+    mutationFn: () => api.delete(`/animals/${id}/foto`),
+    onSuccess: () => { toast.success('Foto removida'); invalidate(); },
+    onError: () => toast.error('Erro'),
+  });
+
+  const { mutate: updateSaude } = useMutation({
+    mutationFn: (saude: Animal['saude']) => api.put(`/animals/${id}`, { saude }),
+    onSuccess: invalidate,
+  });
+
+  const { mutate: uploadVacina, isPending: uploading } = useMutation({
+    mutationFn: (file: File) => {
+      const fd = new FormData();
+      fd.append('file', file);
+      return api.post(`/animals/${id}/vacina`, fd);
+    },
+    onSuccess: () => { toast.success('Arquivo enviado!'); invalidate(); },
+    onError: () => toast.error('Erro no upload'),
+  });
+
+  const { mutate: removeVacinaFile } = useMutation({
+    mutationFn: (path: string) => {
+      const fname = path.split('/').pop() || '';
+      return api.delete(`/animals/${id}/vacina/${fname}`);
+    },
+    onSuccess: invalidate,
+  });
+
+  function addVacina() {
     if (!newVacina.trim() || !animal) return;
     const vacinas = [...(animal.saude?.vacinas || []), newVacina.trim()];
-    await api.put(`/animals/${id}`, { saude: { ...animal.saude, vacinas } });
+    updateSaude({ ...animal.saude, vacinas });
     setNewVacina('');
-    load();
   }
 
-  async function removeVacina(v: string) {
+  function removeVacina(v: string) {
     if (!animal) return;
     const vacinas = (animal.saude?.vacinas || []).filter(x => x !== v);
-    await api.put(`/animals/${id}`, { saude: { ...animal.saude, vacinas } });
-    load();
+    updateSaude({ ...animal.saude, vacinas });
   }
 
-  async function addAlergia() {
+  function addAlergia() {
     if (!newAlergia.trim() || !animal) return;
     const alergias = [...(animal.saude?.alergias || []), newAlergia.trim()];
-    await api.put(`/animals/${id}`, { saude: { ...animal.saude, alergias } });
+    updateSaude({ ...animal.saude, alergias });
     setNewAlergia('');
-    load();
   }
 
-  async function removeAlergia(a: string) {
+  function removeAlergia(a: string) {
     if (!animal) return;
     const alergias = (animal.saude?.alergias || []).filter(x => x !== a);
-    await api.put(`/animals/${id}`, { saude: { ...animal.saude, alergias } });
-    load();
+    updateSaude({ ...animal.saude, alergias });
   }
 
-  async function uploadFoto(file: File) {
-    setUploadingFoto(true);
-    const fd = new FormData();
-    fd.append('foto', file);
-    try {
-      await api.post(`/animals/${id}/foto`, fd);
-      toast('Foto atualizada!');
-      load();
-    } catch { toast('Erro no upload', 'error'); }
-    finally { setUploadingFoto(false); }
-  }
-
-  async function removeFoto() {
-    try {
-      await api.delete(`/animals/${id}/foto`);
-      toast('Foto removida');
-      load();
-    } catch { toast('Erro', 'error'); }
-  }
-
-  async function uploadVacina(file: File) {
-    setUploading(true);
-    const fd = new FormData();
-    fd.append('file', file);
-    try {
-      await api.post(`/animals/${id}/vacina`, fd);
-      toast('Arquivo enviado!');
-      load();
-    } catch { toast('Erro no upload', 'error'); }
-    finally { setUploading(false); }
-  }
-
-  async function removeVacinaFile(path: string) {
-    const fname = path.split('/').pop() || '';
-    await api.delete(`/animals/${id}/vacina/${fname}`);
-    load();
-  }
-
-  if (loading) return <div className="flex justify-center py-20"><Spinner size="lg" /></div>;
+  if (isLoading) return <div className="flex justify-center py-20"><Spinner size="lg" /></div>;
   if (!animal) return <p style={{ color: 'var(--text-muted)' }}>Animal não encontrado.</p>;
+
+  const bookings: Booking[] = (animal as AnimalWithBookings).bookings ?? [];
 
   return (
     <div className="max-w-2xl mx-auto flex flex-col gap-5">
@@ -147,7 +154,7 @@ export default function AnimalDetailPage() {
           <input ref={fotoInputRef} type="file" accept="image/*" className="hidden" onChange={e => e.target.files?.[0] && uploadFoto(e.target.files[0])} />
           <div className="flex-1">
             {editing
-              ? <Input value={form.nome || ''} onChange={e => setForm(f => ({ ...f, nome: e.target.value }))} />
+              ? <Input value={animal.nome} readOnly style={{ display: 'none' }} {...register('nome')} />
               : <p className="text-xl font-bold" style={{ color: 'var(--text-primary)' }}>{animal.nome}</p>
             }
             <p className="text-sm mt-1" style={{ color: 'var(--text-secondary)' }}>
@@ -155,13 +162,21 @@ export default function AnimalDetailPage() {
             </p>
           </div>
           {editing
-            ? <div className="flex gap-2"><Button size="sm" loading={saving} onClick={save}>{t('common.save')}</Button><Button size="sm" variant="ghost" onClick={() => setEditing(false)}>{t('common.cancel')}</Button></div>
+            ? <div className="flex gap-2">
+                <Button size="sm" loading={saving} onClick={handleSubmit(d => saveAnimal(d))}>{t('common.save')}</Button>
+                <Button size="sm" variant="ghost" onClick={() => setEditing(false)}>{t('common.cancel')}</Button>
+              </div>
             : <div className="flex gap-2">
-                <Button size="sm" variant="outline" onClick={() => setEditing(true)}>{t('common.edit')}</Button>
-                {animal.foto_path && <Button size="sm" variant="ghost" onClick={removeFoto}>🗑</Button>}
+                <Button size="sm" variant="outline" onClick={startEditing}>{t('common.edit')}</Button>
+                {animal.foto_path && <Button size="sm" variant="ghost" onClick={() => removeFoto()}>🗑</Button>}
               </div>
           }
         </div>
+        {editing && (
+          <div className="mt-4">
+            <Input label="Nome" error={errors.nome?.message} {...register('nome')} />
+          </div>
+        )}
       </Card>
 
       {/* Health */}
@@ -203,8 +218,7 @@ export default function AnimalDetailPage() {
           {editing && (
             <Textarea
               label={t('animal.fields.notes')}
-              value={form.saude?.observacoes || ''}
-              onChange={e => setForm(f => ({ ...f, saude: { ...f.saude!, observacoes: e.target.value } }))}
+              {...register('observacoes')}
             />
           )}
         </div>
@@ -217,7 +231,7 @@ export default function AnimalDetailPage() {
           accept="image/*,application/pdf"
           maxMB={10}
           label={uploading ? 'Enviando...' : 'Arraste ou clique para enviar'}
-          onFile={uploadVacina}
+          onFile={file => uploadVacina(file)}
         />
         {(animal.arquivos_vacinacao || []).length > 0 && (
           <div className="mt-3 flex flex-col gap-2">

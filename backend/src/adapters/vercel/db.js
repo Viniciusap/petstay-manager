@@ -96,8 +96,22 @@ async function findById(collection, id) {
 }
 
 async function findWhere(collection, filters) {
-  const all = await getCollection(collection);
-  return all.filter(r => Object.entries(filters).every(([k, v]) => r[k] === v));
+  col(collection);
+  const entries = Object.entries(filters);
+  if (entries.length === 0) return getCollection(collection);
+
+  for (const [k] of entries) {
+    if (!/^[a-z_][a-z0-9_]*$/.test(k)) throw new Error(`Invalid filter key: "${k}"`);
+  }
+
+  const conditions = entries.map(([k], i) => `data->>'${k}' = $${i + 1}`);
+  const values = entries.map(([, v]) => String(v));
+
+  const result = await db.query(
+    `SELECT id, created_at, data FROM ${collection} WHERE ${conditions.join(' AND ')} ORDER BY created_at`,
+    values
+  );
+  return result.rows.map(flatRow);
 }
 
 async function getSetting(key) {
