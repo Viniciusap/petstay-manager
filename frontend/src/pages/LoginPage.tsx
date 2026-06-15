@@ -10,7 +10,7 @@ import Input from '../components/ui/Input';
 import Spinner from '../components/ui/Spinner';
 import api, { ApiError } from '../lib/api';
 
-type Mode = 'login' | 'first-setup' | 'no-setup-token';
+type Mode = 'login' | 'first-setup';
 
 const schema = z.object({
   senha: z.string().min(1, 'Digite sua senha'),
@@ -35,13 +35,7 @@ export function LoginPage() {
   });
 
   const s = statusRes?.data;
-  const mode: Mode = !s
-    ? 'login'
-    : s.hasPassword
-      ? 'login'
-      : s.setupConfigured
-        ? 'first-setup'
-        : 'no-setup-token';
+  const mode: Mode = !s || s.hasPassword ? 'login' : 'first-setup';
 
   const { register, handleSubmit, setError, formState: { errors } } = useForm<Fields>({
     resolver: zodResolver(schema),
@@ -64,7 +58,7 @@ export function LoginPage() {
   });
 
   function onSubmit(d: Fields) {
-    if (mode === 'first-setup' && !d.setupToken?.trim()) {
+    if (mode === 'first-setup' && s?.setupConfigured && !d.setupToken?.trim()) {
       setError('setupToken', { message: 'Digite o token de configuração' });
       return;
     }
@@ -114,27 +108,6 @@ export function LoginPage() {
     );
   }
 
-  if (mode === 'no-setup-token') {
-    return (
-      <div className="min-h-screen flex items-center justify-center p-6" style={{ background: 'var(--bg-base)' }}>
-        <div className="w-full max-w-sm rounded-2xl p-6 space-y-3" style={{ background: 'var(--bg-card)', border: '1px solid var(--border)' }}>
-          <div className="text-3xl text-center">⚙️</div>
-          <h2 className="font-bold text-center" style={{ color: 'var(--text-primary)' }}>Configuração necessária</h2>
-          <p className="text-sm" style={{ color: 'var(--text-secondary)' }}>
-            O sistema ainda não tem uma senha definida e a variável{' '}
-            <code className="font-mono text-xs px-1 rounded" style={{ background: 'var(--bg-hover)' }}>SETUP_TOKEN</code>{' '}
-            não está configurada no servidor.
-          </p>
-          <p className="text-sm" style={{ color: 'var(--text-secondary)' }}>
-            Adicione{' '}
-            <code className="font-mono text-xs px-1 rounded" style={{ background: 'var(--bg-hover)' }}>SETUP_TOKEN=sua-chave-secreta</code>{' '}
-            nas variáveis de ambiente e reinicie o servidor.
-          </p>
-        </div>
-      </div>
-    );
-  }
-
   const err = loginError as ApiError | null;
   const errMsg = err?.code === 'INVALID_SETUP_TOKEN' ? 'Token de configuração inválido'
     : err?.code === 'INVALID_PASSWORD' ? 'Senha incorreta'
@@ -155,7 +128,7 @@ export function LoginPage() {
         </div>
 
         <form onSubmit={handleSubmit(onSubmit)} className="rounded-2xl p-6 space-y-4" style={{ background: 'var(--bg-card)', border: '1px solid var(--border)' }}>
-          {mode === 'first-setup' && (
+          {mode === 'first-setup' && s?.setupConfigured && (
             <>
               <div className="rounded-xl p-3 text-sm" style={{ background: 'var(--bg-hover)', color: 'var(--text-secondary)' }}>
                 Primeira vez no sistema. Use o <strong>SETUP_TOKEN</strong> configurado no servidor para definir sua senha.
